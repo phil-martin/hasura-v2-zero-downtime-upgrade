@@ -208,3 +208,63 @@ run. The switch was clean at the backend level, not merely papered over. This
 counter exists because "0 failed requests" is otherwise indistinguishable from
 "the proxy hid a real gap", and the first naive run proved that failure mode is
 not hypothetical.
+
+## 10. What proving the harness had teeth revealed
+
+Two of the five fault-injection tests initially failed, and in both cases the
+harness was right and the test was wrong. Both are findings.
+
+**A 2-second pause causes no failures at all.** A paused container still accepts
+TCP but never answers, so requests hang for the duration and then complete once
+it resumes. Against a 10-second client timeout that is a latency excursion — p99
+went from 11 ms to 2011 ms — not an outage. The harness correctly reported zero
+failures and zero downtime.
+
+That distinction matters more than it looks. A harness that reported a 2-second
+pause and a 15-second one identically would not be measuring anything useful, so
+there are now two tests: the short pause asserts the excursion is visible *and*
+that it is **not** misreported as downtime; the long pause asserts the
+genuine-outage signature. The long one crosses two thresholds at once — HAProxy
+marks the backend down after two failed 1-second checks, and hung requests exceed
+the 10-second client timeout.
+
+**A SIGKILL is invisible through HAProxy.** `retry-on conn-failure` retried the
+refused connections against the restarted container, and every request
+succeeded. That is the proxy doing exactly its job, but it means the fault tested
+the proxy rather than the harness. The test now targets the published port
+directly.
+
+Both corrections rhyme with the naive-baseline correction in §7: any measurement
+taken through the fix will flatter the fix.
+
+**A note on measurement placement.** The short-pause assertion is made against
+the run's overall maximum latency rather than the fault window's. A request that
+starts before the pause and hangs through it is recorded when it *completes*,
+which is after the fault window has closed — so which window catches the stall
+depends on exactly when each probe happened to fire. This is a general hazard of
+windowed measurement with long-running requests, and worth knowing about before
+trusting any per-window latency figure for a fault shorter than the requests
+themselves.
+
+## 11. Recommended next step
+
+The evidence in §1 and §6 points the same way: for this version pair the clone
+was unnecessary and it introduced the only correctness defect found in the whole
+project.
+
+The natural next move is to make the metadata strategy a **choice** rather than a
+constant, and to decide it from evidence at pre-flight:
+
+1. Clone the metadata database into a throwaway and boot the new version against
+   it.
+2. Compare `hdb_catalog.hdb_version` before and after.
+3. If the catalog version did not move, discard the throwaway and run a plain
+   **shared-metadata** blue/green — no clone, and therefore no async-action
+   orphan window to paper over.
+4. If it did move, keep the clone. It is the correct tool for that case, and the
+   action-log sync is the price.
+
+This was deliberately not built: the clone-first approach was an explicit
+decision (#9), and the scope here was a working upgrade, not a second strategy.
+But the measurement now exists to justify it, which is the whole point of having
+built the harness first.
