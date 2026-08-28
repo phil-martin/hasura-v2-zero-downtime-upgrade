@@ -34,3 +34,25 @@ don't re-litigate them.
 
 - Blue and green share the **source** database's `hdb_catalog` during overlap. If v2.50.1 migrates the event-log schema on source init, blue is exposed. The harness measures whether this actually bites.
 - The deliverable carries two one-time prerequisites, each needing a planned maintenance window: introduce HAProxy, and split the metadata database. Performing those migrations is a documented procedure, not something the harness covers.
+
+| # | Question | Decision |
+|---|----------|----------|
+| 11 | Run duration | **Long runs are fine.** Named profiles: `fast` (90s, upgrade @30s), `default` (5m, upgrade @2m), `soak` (20m, upgrade @4m, rollback @12m). All overridable by env. |
+| 12 | Upgrade triggering | **A schedule of timed actions**, not a single trigger point. Enables upgrade-then-rollback in one continuous run with probes never stopping. Measurement windows derive from the marker timeline rather than being three hardcoded phases. |
+
+### What longer runs specifically buy
+
+- **Cron across the metadata clone.** Hasura pre-generates future cron events into
+  `hdb_cron_events` in the metadata store. Cloning (rather than starting green fresh)
+  exists to preserve them. Only a multi-minute run can assert that events scheduled by
+  blue *before* the upgrade actually fire on green *after* it — i.e. it tests the thing
+  decision #9 was made to protect.
+- **Event retry across the upgrade boundary.** The sidecar deliberately fails a delivery;
+  Hasura's backoff retry should land after the switch — scheduled by the old instance,
+  delivered by the new one.
+- **Rollback has a test at all.** Previously designed but unasserted. Confidence is not
+  that upgrades succeed, it is that failures are recoverable.
+
+Deferred (YAGNI): chaining 2.48.4 → 2.49.5 → 2.50.1 in one run. The timed-action schedule
+permits it, but it forces blue/green role alternation across three versions and there is
+no evidence yet that we need it.
