@@ -5,6 +5,9 @@ request — and, more importantly, a test harness that can *prove* it.
 
 The harness came first. The upgrade mechanism was built against it.
 
+**Status:** complete and green. Full suite 25/25 tests across 6 files, ~43
+minutes. Verified on `v2.48.4` → `v2.50.1`.
+
 ## The result
 
 `v2.48.4` → `v2.50.1`, five-minute runs, ~34,400 requests each, every major
@@ -23,6 +26,13 @@ Hasura v2 feature exercised continuously throughout.
 | Subscription drops | 14 | 2 |
 | Max reconnect | 263 ms | 123 ms |
 | Proxy retries | n/a (not in path) | 0 |
+
+A separate seven-minute run does an upgrade **and then a rollback**, with probes
+never stopping: **48,169 requests, 0 failures, 0 ms outage**, 1049/1049 events
+delivered, and the upgrade window and rollback window each individually clean.
+That is the strongest single piece of evidence here, because confidence in an
+upgrade process is not that upgrades succeed — it is that failures are
+recoverable.
 
 Subscription drops are expected and permitted: a GraphQL websocket is stateful
 against one process, so when that process goes away the socket dies and no proxy
@@ -71,20 +81,64 @@ either the harness lost detection power or something changed underneath us.
 
 ## Quick start
 
+Requires Docker and Node 22+. All host ports bind to `127.0.0.1` only: 8080
+(HAProxy — the only endpoint probes use), 8081 (sidecar), 8181/8182 (the two
+engines, direct, for the pre-flight gate), 5433 (Postgres), 9999 (HAProxy runtime
+API) and 8404 (HAProxy stats page, for debugging a run by eye).
+
 ```bash
 npm install
-npm run stack:up        # postgres, sidecar, haproxy, hasura-blue
-npm run seed            # schema, deterministic data, metadata
-npm run snapshot        # capture oracle expectations
+npm run stack:reset     # tear down, rebuild, seed, apply metadata — start here
+npm run snapshot        # capture oracle expectations (only needed once)
 
 npm run harness -- --profile=fast --policy=strict --upgrader=none
 npm run harness -- --profile=default --policy=zero-downtime --upgrader=zero-downtime
-npm test                # full suite: baseline ×3, naive, teeth, zero-downtime, rollback
+npm test                # full suite: teeth, zero-downtime, naive, rollback, baseline ×3
 ```
+
+Use `stack:reset` rather than `stack:up` + `seed` unless the Postgres volume is
+genuinely empty — `seed` runs raw `CREATE TABLE` and will fail against an
+already-seeded database. `stack:reset` does `down -v` first, which also clears
+any metadata clones left behind by a previous upgrade.
 
 `FROM_VERSION` / `TO_VERSION` select the upgrade path. Profiles are `fast` (90s),
 `default` (5 min) and `soak` (20 min, with a rollback at 12 min). Policies are
-`strict`, `zero-downtime` and `informational`.
+`strict`, `zero-downtime` and `informational`. `--target=direct-blue` bypasses
+HAProxy, which is how the naive baseline is measured.
+
+Each run writes its full scorecard to `runs/*.json`, so a result can be
+re-examined without re-running the five minutes that produced it.
+
+## Using this on a real deployment
+
+Two one-time changes are required first, each needing a short maintenance
+window — see [`docs/prerequisites.md`](docs/prerequisites.md):
+
+1. **Put HAProxy in front of Hasura.** Nothing can hold a client connection while
+   the process behind it is replaced unless such a layer exists.
+2. **Split metadata into its own database**, so the new version can boot against
+   a clone rather than migrating the catalog the old version is serving from.
+
+There is also a third, one-line fix worth doing at the same time: Compose
+defaults `stop_grace_period` to 10s while Hasura's graceful shutdown timeout is
+60s, so by default Compose SIGKILLs the engine straight through in-flight event
+processing.
+
+## Layout
+
+```
+compose/     docker-compose.yml, haproxy.cfg, postgres init
+seed/        schema, deterministic data, Hasura metadata
+sidecar/     event + cron webhooks, Actions handler, remote schema
+src/
+  probes/    one module per feature group; the long-lived subscription probes
+  oracle/    read specs and captured expectations
+  runner/    scheduler, timeline
+  report/    windows, scorecard, policies, rendering
+  upgraders/ naive.ts, zeroDowntime.ts, the green verification gate
+  faults/    deliberate faults, for proving the harness detects damage
+tests/
+```
 
 ## How it works
 
@@ -113,7 +167,9 @@ catalog version 48, so plain shared-metadata blue/green would have worked — an
 would have avoided a real defect the clone introduced (see below). The clone
 remains correct insurance for version pairs that *do* cross a catalog bump, and
 it is what makes rollback a proxy flip rather than a database repair. But it is
-not free.
+not free. The natural next step is to make the metadata strategy a *choice*
+decided from evidence at pre-flight; that is sketched, unbuilt, in
+[findings §11](docs/findings.md).
 
 **The bar being zero is what made this work.** An early zero-downtime run reported
 one failure in 34,404 requests — 0.003%. That single failure was a genuine design
@@ -127,5 +183,7 @@ shipped the bug each time.
 
 - [`docs/prerequisites.md`](docs/prerequisites.md) — the two one-time migrations, and a Compose default that silently breaks event processing
 - [`docs/runbook.md`](docs/runbook.md) — the upgrade procedure, abort and rollback paths
-- [`docs/findings.md`](docs/findings.md) — everything measured, including the surprises
+- [`docs/findings.md`](docs/findings.md) — everything measured, including the surprises and what to do next
 - [`docs/superpowers/specs/`](docs/superpowers/specs/) — the design this was built from
+- [`docs/superpowers/plans/`](docs/superpowers/plans/) — the implementation plan, with what deviated from it and why
+- [`docs/superpowers/decisions.md`](docs/superpowers/decisions.md) — every design decision, and how the measurements later judged it
