@@ -85,6 +85,13 @@ export function renderScorecard(s: Scorecard, verdict: PolicyVerdict): string {
     `  scheduled events in metadata store: start=${s.cron.scheduledEventsAtStart ?? 'n/a'} end=${s.cron.scheduledEventsAtEnd ?? 'n/a'}`,
   )
 
+  if (s.failureSamples.length > 0) {
+    out.push(bar('FAILURE SAMPLES'))
+    for (const f of s.failureSamples) {
+      out.push(`  +${String(f.atMs).padStart(7)}ms  ${f.probeId} [${f.kind}] ${f.detail}`)
+    }
+  }
+
   out.push(bar('TIMELINE'))
   for (const m of s.markers) {
     const detail = m.detail === undefined ? '' : ` ${JSON.stringify(m.detail)}`

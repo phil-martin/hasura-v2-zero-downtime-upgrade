@@ -1,4 +1,6 @@
+import { createHash } from 'node:crypto'
 import { Agent, request } from 'undici'
+import { canonical } from '../oracle/canonical.js'
 import type { GqlClient, GqlResult } from '../probes/types.js'
 
 /**
@@ -187,6 +189,19 @@ export class HasuraClient implements GqlClient {
   async exportMetadata(): Promise<{ metadata: unknown; resourceVersion: number }> {
     const out = await this.metadata('export_metadata', { version: 2 })
     return { metadata: out.metadata, resourceVersion: Number(out.resource_version) }
+  }
+
+  /**
+   * Stable content hash of the exported metadata.
+   *
+   * Used instead of `resource_version` because not every v2 release returns
+   * that field from `export_metadata`, and comparing two absent values as
+   * numbers yields NaN !== NaN, which reports drift on every single run.
+   */
+  async metadataFingerprint(): Promise<string> {
+    const out = await this.metadata('export_metadata', {})
+    const metadata = out?.metadata ?? out
+    return createHash('sha256').update(canonical(metadata)).digest('hex').slice(0, 16)
   }
 
   async inconsistentMetadata(): Promise<unknown[]> {

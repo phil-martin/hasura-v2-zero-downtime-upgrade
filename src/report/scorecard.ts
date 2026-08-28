@@ -68,6 +68,15 @@ export type Scorecard = {
   seqWritten: number
   seqWriteFailures: number
   markers: Array<{ name: string; atMs: number; detail?: unknown }>
+  /**
+   * A sample of actual failures, with the probe and reason.
+   *
+   * Reporting "1 failed request" without saying which probe and why makes a
+   * near-miss impossible to diagnose without re-running a five-minute job. The
+   * single timeout in the first zero-downtime run turned out to be a real
+   * design defect, and it was only findable because of this.
+   */
+  failureSamples: Array<{ atMs: number; probeId: string; group: string; kind: string; detail: string }>
   headline: {
     longestContiguousOutageMs: number
     failedRequests: number

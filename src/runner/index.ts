@@ -322,6 +322,16 @@ export async function runHarness(opts: RunOptions = {}): Promise<RunResult> {
     seqWritten: writer.written.length,
     seqWriteFailures: writer.writeFailures.length,
     markers: timeline.markers().map((m) => ({ name: m.name, atMs: m.t - runStart, detail: m.detail })),
+    failureSamples: records
+      .filter((r): r is typeof r & { ok: false } => !r.ok)
+      .slice(0, 25)
+      .map((r) => ({
+        atMs: r.t - runStart,
+        probeId: r.probeId,
+        group: r.group,
+        kind: r.kind,
+        detail: r.detail.slice(0, 300),
+      })),
     headline: {
       longestContiguousOutageMs: overall.longestContiguousOutageMs,
       failedRequests: overall.failures,

@@ -10,6 +10,7 @@ import {
   containerEnvVar,
   containerIp,
   containerRunning,
+  copyActionLog,
   dbNameFromUrl,
   dropDatabase,
   versionEnv,
@@ -56,7 +57,7 @@ export const zeroDowntimeUpgrader: Upgrader = {
     // --- 1. Pre-flight on blue --------------------------------------------
     const blue = adminClient(cfg.blueDirectUrl)
     const blueVersion = await blue.version()
-    const before = await blue.exportMetadata()
+    const before = await blue.metadataFingerprint()
     const blueInconsistent = await blue.inconsistentMetadata()
     if (blueInconsistent.length > 0) {
       // Refuse to upgrade from a broken starting point: we would not be able to
@@ -68,10 +69,7 @@ export const zeroDowntimeUpgrader: Upgrader = {
       })
       throw new Error('aborting upgrade: blue metadata is already inconsistent')
     }
-    ctx.timeline.marker('preflight.blue.ok', {
-      blueVersion,
-      resourceVersion: before.resourceVersion,
-    })
+    ctx.timeline.marker('preflight.blue.ok', { blueVersion, metadataFingerprint: before })
 
     // --- 2. Clone the metadata database ------------------------------------
     const originalMetadataDb =
@@ -100,8 +98,14 @@ export const zeroDowntimeUpgrader: Upgrader = {
     ctx.timeline.marker('green.ready', { ms: Date.now() - bootStarted })
 
     // --- 4. Gate on green ---------------------------------------------------
+    // Declared here so the abort path can stop it. The address gate can fire
+    // after the sync loop has started, and an aborted upgrade must not leave a
+    // background loop writing to a database it is about to drop.
+    let syncingActions = false
+
     const abort = async (stage: string, reason: string, detail?: unknown) => {
       ctx.log(`ABORTING at ${stage}: ${reason}`)
+      syncingActions = false
       await compose(['--profile', 'green', 'stop', 'hasura-green'], versionEnv({}), 180_000).catch(() => {})
       await compose(['--profile', 'green', 'rm', '-f', 'hasura-green'], versionEnv({}), 120_000).catch(() => {})
       await dropDatabase(cloneDb).catch(() => {})
@@ -131,7 +135,24 @@ export const zeroDowntimeUpgrader: Upgrader = {
       ms: Date.now() - verifyStarted,
     })
 
-    // --- 5. Switch traffic --------------------------------------------------
+    // --- 5. Keep async action results reachable across the switch -----------
+    // Blue keeps serving until it is drained and stopped, but green reads the
+    // clone. An async action created on blue after the clone was taken writes
+    // its result somewhere green cannot see, so the client polls forever.
+    //
+    // The exposure is only the moments around the switch, but it is real: the
+    // first zero-downtime run failed on exactly one such action. Syncing every
+    // second from here until blue stops reduces the window to about a second,
+    // which is well inside any sane client's poll budget.
+    syncingActions = true
+    const actionSync = (async () => {
+      while (syncingActions) {
+        await copyActionLog(originalMetadataDb, cloneDb).catch(() => {})
+        await new Promise((r) => setTimeout(r, 1_000))
+      }
+    })()
+
+    // --- 6. Switch traffic --------------------------------------------------
     // Point HAProxy at green's actual address before enabling it. Green did not
     // exist when HAProxy booted, so its hostname never resolved and it sits in
     // MAINT (resolution); relying on the DNS refresh to notice would make the
@@ -147,29 +168,40 @@ export const zeroDowntimeUpgrader: Upgrader = {
     await hap.setServerState(BACKEND, BLUE, 'drain')
     ctx.timeline.marker('traffic.switch', { greenStatus, greenIp })
 
-    // --- 6. Drain blue ------------------------------------------------------
+    // --- 7. Drain blue ------------------------------------------------------
     // Websocket subscriptions hold their sessions, so this is where the
     // reconnect budget is spent. A residual count is a measurement, not an
     // error: it is recorded and the upgrade proceeds.
     const drain = await hap.waitDrained(BACKEND, BLUE, DRAIN_TIMEOUT_MS)
     ctx.timeline.marker('drain.complete', drain)
 
-    // --- 7. Stop blue -------------------------------------------------------
+    // --- 8. Stop blue -------------------------------------------------------
     ctx.log('stopping blue with full graceful-shutdown grace period')
     const stopStarted = Date.now()
     await compose(['stop', 'hasura-blue'], versionEnv({ blueMetadataDb: originalMetadataDb }), 180_000)
     state.blueStopped = true
     ctx.timeline.marker('blue.stopped', { ms: Date.now() - stopStarted })
 
-    // --- 8. Post-conditions -------------------------------------------------
-    const after = await green.exportMetadata()
-    if (after.resourceVersion !== before.resourceVersion) {
+    // --- 9. Final action-log reconciliation ---------------------------------
+    // Blue is definitely not writing any more, so this catches anything the
+    // 1-second loop missed on its last tick.
+    syncingActions = false
+    await actionSync
+    const actionCopy = await copyActionLog(originalMetadataDb, cloneDb).catch((err) => {
+      ctx.timeline.marker('actionlog.copy.failed', { error: String(err).slice(0, 300) })
+      return { copied: 0 }
+    })
+    ctx.timeline.marker('actionlog.reconciled', actionCopy)
+
+    // --- 10. Post-conditions ------------------------------------------------
+    // Compared by content hash rather than resource_version: not every v2
+    // release returns resource_version from export_metadata, and a hash is
+    // version-independent.
+    const after = await green.metadataFingerprint()
+    if (after !== before) {
       // Metadata changed underneath the upgrade. Not fatal, but it invalidates
       // the assumption the clone was based on, so it must be visible.
-      ctx.timeline.marker('metadata.drift', {
-        before: before.resourceVersion,
-        after: after.resourceVersion,
-      })
+      ctx.timeline.marker('metadata.drift', { before, after })
     }
     const stats = await hap.showStat()
     const greenStat = stats.find((s) => s.pxname === BACKEND && s.svname === GREEN)

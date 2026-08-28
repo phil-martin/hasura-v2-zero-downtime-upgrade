@@ -157,6 +157,58 @@ export async function cloneMetadataDb(source: string, target: string): Promise<{
   return { ms: Date.now() - started, rows: Number(rows[0]?.n ?? 0) }
 }
 
+/**
+ * Copy async action results from the old metadata database into the clone.
+ *
+ * The clone is taken before green boots, but blue keeps serving until it is
+ * drained and stopped. Any async action created on blue in that window writes
+ * its result to blue's `hdb_action_log`, which green — reading the clone — can
+ * never see. The client polls forever and the result is silently lost.
+ *
+ * The harness caught this as a single unexplained timeout during the upgrade
+ * window. Copying the rows across after blue stops closes the gap. Action ids
+ * are UUIDs, so re-inserting rows the clone already has is a no-op.
+ */
+export async function copyActionLog(fromDb: string, toDb: string): Promise<{ copied: number }> {
+  const cols = await sql<{ column_name: string }>(
+    fromDb,
+    `SELECT column_name FROM information_schema.columns
+     WHERE table_schema = 'hdb_catalog' AND table_name = 'hdb_action_log'
+     ORDER BY ordinal_position`,
+  )
+  const names = cols.map((c) => c.column_name)
+  if (names.length === 0) return { copied: 0 }
+
+  // Incremental: only rows the target does not already have. Re-inserting every
+  // row on every tick would turn a 1-second sync loop into hundreds of
+  // redundant statements per second.
+  const existing = new Set(
+    (await sql<{ id: string }>(toDb, `SELECT id::text AS id FROM hdb_catalog.hdb_action_log`)).map((r) => r.id),
+  )
+
+  const quoted = names.map(quoteIdent).join(', ')
+  const rows = await sql<Record<string, unknown>>(fromDb, `SELECT ${quoted} FROM hdb_catalog.hdb_action_log`)
+  const missing = rows.filter((r) => !existing.has(String(r.id)))
+  if (missing.length === 0) return { copied: 0 }
+
+  const placeholders = names.map((_, i) => `$${i + 1}`).join(', ')
+  let copied = 0
+  for (const row of missing) {
+    const values = names.map((n) => {
+      const v = row[n]
+      // jsonb columns come back as parsed objects; Postgres needs text it can cast.
+      return v !== null && typeof v === 'object' && !(v instanceof Date) ? JSON.stringify(v) : v
+    })
+    const res = await sql(
+      toDb,
+      `INSERT INTO hdb_catalog.hdb_action_log (${quoted}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`,
+      values,
+    ).catch(() => null)
+    if (res !== null) copied++
+  }
+  return { copied }
+}
+
 export async function dropDatabase(name: string): Promise<void> {
   await sql(
     'postgres',
