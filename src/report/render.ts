@@ -14,6 +14,7 @@ export function renderScorecard(s: Scorecard, verdict: PolicyVerdict): string {
 
   out.push(bar('RUN'))
   out.push(`  profile        ${s.profile}`)
+  out.push(`  probe target   ${s.probeTarget}`)
   out.push(`  upgrader       ${s.upgrader}`)
   out.push(`  versions       ${s.fromVersion} → ${s.toVersion}`)
   out.push(`  duration       ${ms(s.runEnd - s.runStart)}`)
@@ -54,6 +55,19 @@ export function renderScorecard(s: Scorecard, verdict: PolicyVerdict): string {
     )
   }
   out.push(`  seq rows written=${s.seqWritten} writeFailures=${s.seqWriteFailures}`)
+
+  if (s.proxy) {
+    out.push(bar('PROXY INTEGRITY'))
+    out.push(
+      `  retries=${s.proxy.retries} redispatches=${s.proxy.redispatches} connErrors=${s.proxy.connErrors} respErrors=${s.proxy.respErrors}`,
+    )
+    if (s.proxy.retries > 0 || s.proxy.connErrors > 0) {
+      // Without this line a clean-looking headline could be an artefact of the
+      // proxy retrying a real backend gap rather than evidence of a clean switch.
+      out.push('  NOTE: non-zero retries/connErrors mean the proxy absorbed backend failures.')
+      out.push('        The zero in "failed requests" above is partly the proxy, not purely the switch.')
+    }
+  }
 
   out.push(bar('EVENTS'))
   const e = s.events

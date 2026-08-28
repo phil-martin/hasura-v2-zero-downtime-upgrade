@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { COMPOSE_DIR, SEED_DIR, cfg, metadataDbUrl } from '../config/index.js'
 import { HasuraClient, waitHealthy } from '../hasura/client.js'
-import { pool, sql } from '../db/pool.js'
+import { closeAllPools, pool, sql } from '../db/pool.js'
 
 const exec = promisify(execFile)
 
@@ -59,7 +59,12 @@ export function adminClient(baseUrl: string): HasuraClient {
  * apply metadata. Used between tests that change which version blue runs.
  */
 export async function fullReset(opts: { blueVersion?: string } = {}): Promise<void> {
-  await compose(['down', '-v', '--remove-orphans'], {}, 180_000).catch(() => {})
+  // `--profile green` so green is torn down too, and `-v` so the Postgres
+  // volume goes with it — that is what removes any metadata clones left behind
+  // by a previous upgrade, along with HAProxy's server states, returning the
+  // stack to a genuinely known starting point.
+  await compose(['--profile', 'green', 'down', '-v', '--remove-orphans'], {}, 180_000).catch(() => {})
+  await closeAllPools()
   const env = versionEnv({ blueVersion: opts.blueVersion, blueMetadataDb: cfg.metadataDb })
   await compose(['up', '-d', '--build', 'postgres', 'sidecar', 'haproxy', 'hasura-blue'], env, 420_000)
   await waitForPostgres(120_000)

@@ -10,6 +10,17 @@ export type ServerStat = {
   scur: number
   /** Cumulative sessions. */
   stot: number
+  /**
+   * Integrity counters. A run can report zero client-visible failures while the
+   * proxy was quietly retrying a real backend gap. Without these, "0 failed
+   * requests" could be an artefact of `retry-on conn-failure` rather than
+   * evidence the switch was clean, and the headline number would be flattering
+   * rather than true.
+   */
+  wretr: number
+  wredis: number
+  econ: number
+  eresp: number
 }
 
 /**
@@ -61,6 +72,11 @@ export class HaproxyClient {
     const iStatus = idx('status')
     const iScur = idx('scur')
     const iStot = idx('stot')
+    const num = (f: string[], i: number) => (i < 0 ? 0 : Number(f[i] ?? '0') || 0)
+    const iWretr = idx('wretr')
+    const iWredis = idx('wredis')
+    const iEcon = idx('econ')
+    const iEresp = idx('eresp')
 
     const stats: ServerStat[] = []
     for (const line of lines) {
@@ -73,8 +89,12 @@ export class HaproxyClient {
         pxname,
         svname,
         status: f[iStatus] ?? '',
-        scur: Number(f[iScur] ?? '0') || 0,
-        stot: Number(f[iStot] ?? '0') || 0,
+        scur: num(f, iScur),
+        stot: num(f, iStot),
+        wretr: num(f, iWretr),
+        wredis: num(f, iWredis),
+        econ: num(f, iEcon),
+        eresp: num(f, iEresp),
       })
     }
     return stats

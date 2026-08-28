@@ -115,6 +115,7 @@ async function main(): Promise<void> {
         profileName: flag('profile'),
         policyName: flag('policy'),
         upgraderName: flag('upgrader', 'none'),
+        probeTarget: flag('target', 'proxy') === 'direct-blue' ? 'direct-blue' : 'proxy',
       })
       console.log(renderScorecard(scorecard, verdict))
       process.exitCode = verdict.pass ? 0 : 1

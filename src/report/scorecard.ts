@@ -36,8 +36,24 @@ export type SubscriptionScore = {
   maxSeqSeen: number
 }
 
+/**
+ * Proxy-side counters accumulated over the run.
+ *
+ * These are an honesty check on the headline numbers. A clean switch should
+ * need no retries at all; a large retry count alongside "0 failed requests"
+ * means the proxy absorbed a real backend gap, and the report must say so
+ * rather than present the zero as if the upgrade had been seamless.
+ */
+export type ProxyCounters = {
+  retries: number
+  redispatches: number
+  connErrors: number
+  respErrors: number
+}
+
 export type Scorecard = {
   profile: string
+  probeTarget: string
   upgrader: string
   fromVersion: string
   toVersion: string
@@ -46,6 +62,7 @@ export type Scorecard = {
   windows: WindowScore[]
   overall: WindowScore
   subscriptions: SubscriptionScore[]
+  proxy: ProxyCounters | null
   events: EventReconciliation
   cron: CronReconciliation
   seqWritten: number

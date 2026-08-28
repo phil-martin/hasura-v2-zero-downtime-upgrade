@@ -11,7 +11,7 @@ import { LiveMaxSeqSubscription, StreamingSeqSubscription, wsUrlFor } from '../p
 import type { GqlClient, Probe, ProbeCtx, ProbeGroup } from '../probes/types.js'
 import { Timeline } from './timeline.js'
 import { deriveWindows } from '../report/windows.js'
-import { scoreWindow, type Scorecard, type SubscriptionScore } from '../report/scorecard.js'
+import { scoreWindow, type ProxyCounters, type Scorecard, type SubscriptionScore } from '../report/scorecard.js'
 import { evaluatePolicy, type PolicyVerdict } from '../report/policies.js'
 import {
   BLUE_CONTAINER,
@@ -22,6 +22,10 @@ import {
   lightReset,
 } from '../stack/index.js'
 import { sql } from '../db/pool.js'
+import { BACKEND, HaproxyClient } from '../haproxy/client.js'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
+import { REPO_ROOT } from '../config/index.js'
 import type { Upgrader } from '../upgraders/types.js'
 import { noopUpgrader } from '../upgraders/types.js'
 import { naiveUpgrader } from '../upgraders/naive.js'
@@ -51,10 +55,27 @@ export const UPGRADERS: Record<string, Upgrader> = {
   'zero-downtime': zeroDowntimeUpgrader,
 }
 
+/**
+ * Where probes send their traffic.
+ *
+ * `proxy` is the proposed topology: HAProxy in front, health checks, drain.
+ * `direct-blue` models what a community deployment looks like TODAY — Hasura's
+ * port published straight to the host, with no proxy, no health checking and no
+ * connection retries.
+ *
+ * The naive baseline must use `direct-blue`. Measuring the naive upgrade from
+ * behind HAProxy measures it through the very component that is part of the
+ * fix, which makes the fix look unnecessary: the proxy's conn-failure retry
+ * quietly absorbs the gap between the old container exiting and the new one
+ * listening.
+ */
+export type ProbeTarget = 'proxy' | 'direct-blue'
+
 export type RunOptions = {
   profileName?: string
   policyName?: string
   upgraderName?: string
+  probeTarget?: ProbeTarget
   /** Overrides merged over the captured expectations, for fault injection. */
   expectedOverrides?: ExpectedMap
   /** Extra work to run at a given offset, for fault injection. */
@@ -83,10 +104,12 @@ export async function runHarness(opts: RunOptions = {}): Promise<RunResult> {
 
   const expected: ExpectedMap = { ...(await loadExpected()), ...(opts.expectedOverrides ?? {}) }
 
-  // Every probe goes through HAProxy. Direct engine URLs exist only for the
-  // upgrader's pre-flight gate.
-  const admin = new HasuraClient({ baseUrl: cfg.proxyUrl, adminSecret: cfg.adminSecret })
-  const anon = new HasuraClient({ baseUrl: cfg.proxyUrl, adminSecret: cfg.adminSecret, unauthenticated: true })
+  const probeTarget: ProbeTarget = opts.probeTarget ?? 'proxy'
+  const targetUrl = probeTarget === 'proxy' ? cfg.proxyUrl : cfg.blueDirectUrl
+  log(`probes targeting ${probeTarget} (${targetUrl})`)
+
+  const admin = new HasuraClient({ baseUrl: targetUrl, adminSecret: cfg.adminSecret })
+  const anon = new HasuraClient({ baseUrl: targetUrl, adminSecret: cfg.adminSecret, unauthenticated: true })
   const roleClients = new Map<string, GqlClient>()
 
   const eventExpectations: EventExpectation[] = []
@@ -100,7 +123,7 @@ export async function runHarness(opts: RunOptions = {}): Promise<RunResult> {
       const cacheKey = `${role}:${userId ?? ''}`
       let client = roleClients.get(cacheKey)
       if (!client) {
-        client = new HasuraClient({ baseUrl: cfg.proxyUrl, adminSecret: cfg.adminSecret, role, userId })
+        client = new HasuraClient({ baseUrl: targetUrl, adminSecret: cfg.adminSecret, role, userId })
         roleClients.set(cacheKey, client)
       }
       return client
@@ -121,16 +144,23 @@ export async function runHarness(opts: RunOptions = {}): Promise<RunResult> {
   ]
 
   const scheduledEventsAtStart = await countScheduledCronEvents()
+  const proxyBefore = await readProxyCounters()
 
   const runStart = Date.now()
   const timeline = new Timeline(runStart)
-  timeline.marker('run.start', { profile: prof.name, upgrader: upgraderName, from: cfg.fromVersion, to: cfg.toVersion })
+  timeline.marker('run.start', {
+    profile: prof.name,
+    upgrader: upgraderName,
+    probeTarget,
+    from: cfg.fromVersion,
+    to: cfg.toVersion,
+  })
 
   // --- long-lived probes ---------------------------------------------------
   const writer = new SeqWriter(250)
   writer.start()
 
-  const wsUrl = wsUrlFor(cfg.proxyUrl)
+  const wsUrl = wsUrlFor(targetUrl)
   const streaming = new StreamingSeqSubscription('s_streaming_cursor', wsUrl, cfg.adminSecret)
   const live = new LiveMaxSeqSubscription('s_live_max_seq', wsUrl, cfg.adminSecret)
   streaming.start()
@@ -210,6 +240,7 @@ export async function runHarness(opts: RunOptions = {}): Promise<RunResult> {
 
   const runEnd = Date.now()
   timeline.marker('run.end')
+  const proxyAfter = await readProxyCounters()
 
   // Stop producing rows first, then give subscriptions a moment to drain what
   // was already committed, so trailing rows are not miscounted as missed.
@@ -276,6 +307,7 @@ export async function runHarness(opts: RunOptions = {}): Promise<RunResult> {
 
   const scorecard: Scorecard = {
     profile: prof.name,
+    probeTarget,
     upgrader: upgraderName,
     fromVersion: cfg.fromVersion,
     toVersion: cfg.toVersion,
@@ -284,6 +316,7 @@ export async function runHarness(opts: RunOptions = {}): Promise<RunResult> {
     windows: windowScores,
     overall,
     subscriptions,
+    proxy: deltaProxy(proxyBefore, proxyAfter),
     events,
     cron,
     seqWritten: writer.written.length,
@@ -301,7 +334,51 @@ export async function runHarness(opts: RunOptions = {}): Promise<RunResult> {
     },
   }
 
-  return { scorecard, verdict: evaluatePolicy(pol, scorecard), timeline }
+  const verdict = evaluatePolicy(pol, scorecard)
+  await persistRun(scorecard, verdict).catch((err) => log(`could not persist run: ${String(err)}`))
+  return { scorecard, verdict, timeline }
+}
+
+/**
+ * Read cumulative proxy counters for the backend as a whole.
+ *
+ * Returns null when HAProxy is unreachable, which is a legitimate state for a
+ * `direct-blue` run where the proxy is not part of the topology under test.
+ */
+async function readProxyCounters(): Promise<ProxyCounters | null> {
+  try {
+    const hap = new HaproxyClient(cfg.haproxyHost, cfg.haproxyPort)
+    const stats = await hap.showStat()
+    const backend = stats.find((s) => s.pxname === BACKEND && s.svname === 'BACKEND')
+    if (!backend) return null
+    return {
+      retries: backend.wretr,
+      redispatches: backend.wredis,
+      connErrors: backend.econ,
+      respErrors: backend.eresp,
+    }
+  } catch {
+    return null
+  }
+}
+
+function deltaProxy(before: ProxyCounters | null, after: ProxyCounters | null): ProxyCounters | null {
+  if (!before || !after) return null
+  return {
+    retries: after.retries - before.retries,
+    redispatches: after.redispatches - before.redispatches,
+    connErrors: after.connErrors - before.connErrors,
+    respErrors: after.respErrors - before.respErrors,
+  }
+}
+
+/** Persist the full scorecard so a run can be re-examined without re-running it. */
+async function persistRun(scorecard: Scorecard, verdict: PolicyVerdict): Promise<void> {
+  const dir = resolve(REPO_ROOT, 'runs')
+  await mkdir(dir, { recursive: true })
+  const stamp = new Date(scorecard.runStart).toISOString().replace(/[:.]/g, '-')
+  const file = resolve(dir, `${stamp}-${scorecard.upgrader}-${scorecard.profile}.json`)
+  await writeFile(file, `${JSON.stringify({ scorecard, verdict }, null, 2)}\n`, 'utf8')
 }
 
 /**
