@@ -103,20 +103,45 @@ never see it. The client polls until it gives up, and the result is lost.
 This is caused *by* the clone. Without it, both engines would share one
 `hdb_action_log` and the problem would not exist.
 
-**Fix, and a second bug inside the fix.** The upgrader now syncs
-`hdb_action_log` from blue into the clone every second, from the traffic switch
-until blue stops, plus a final pass afterwards.
+**It took three attempts to fix, and each failure taught something.**
 
-The first version of that sync used `ON CONFLICT DO NOTHING`, and the harness
-failed again in exactly the same way. `hdb_action_log` rows are written twice:
-once when the action is created, and again when the handler responds. A row
-copied while still in `created` state kept its null `response_payload` on green
-permanently. The sync now upserts rows whose target copy is not yet complete.
+*First attempt.* Sync `hdb_action_log` from blue into the clone after blue stops.
+Useless: that is ~100 seconds too late for a client polling for 8.
 
-The general lesson is worth more than the specific bug. A single failure in
-34,404 requests was a real design defect, and the only reason it was findable is
-that the bar was zero. An error budget of "less than 0.01%" would have called
-that run a success and shipped the defect — twice.
+*Second attempt.* Sync every second from the traffic switch, using
+`ON CONFLICT DO NOTHING`. Failed the same way. `hdb_action_log` rows are written
+twice — once when the action is created, and again when the handler responds — so
+a row copied while still in `created` state kept its null `response_payload` on
+green permanently. The sync now upserts rows whose target copy is not yet
+complete.
+
+*Third attempt, and the actual root cause.* The sync still started at the traffic
+switch, leaving the ~1.6 seconds of green's boot and verification uncovered — and
+that gap is exactly where the orphaned action lands. The orphan window opens when
+the **clone** is taken, not when traffic moves. Starting the sync there closes
+it.
+
+Instrumenting the loop proved the mechanism rather than merely observing a pass:
+
+```
+actionlog.reconciled { finalPass: 0, syncTicks: 201, syncCopied: 1, syncErrors: [] }
+```
+
+**Exactly one** action row per upgrade needs carrying across. That single row is
+the entire bug, and it explains the intermittency precisely: whether it landed
+inside the uncovered gap was close to a coin flip, which is why identical code
+passed standalone and failed in the suite.
+
+Worth noting what made this findable at all. The earlier versions swallowed sync
+errors with `.catch(() => {})`, so a silently failing sync was indistinguishable
+from a working one — and the probe's message, `output still null`, covered both
+"green has no such row" and "green has the row but it is pending", which are
+different bugs. Neither could be diagnosed until both were fixed.
+
+The general lesson is worth more than the specific bug. One failure in 34,404
+requests — 0.003% — was a real design defect, and the only reason it was findable
+is that the bar was zero. An error budget of "less than 0.01%" would have called
+those runs a success and shipped the defect three times over.
 
 ## 7. Measured comparison
 
