@@ -186,11 +186,6 @@ export class HasuraClient implements GqlClient {
     return String(body.version)
   }
 
-  async exportMetadata(): Promise<{ metadata: unknown; resourceVersion: number }> {
-    const out = await this.metadata('export_metadata', { version: 2 })
-    return { metadata: out.metadata, resourceVersion: Number(out.resource_version) }
-  }
-
   /**
    * Stable content hash of the exported metadata.
    *
