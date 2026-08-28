@@ -103,28 +103,36 @@ never see it. The client polls until it gives up, and the result is lost.
 This is caused *by* the clone. Without it, both engines would share one
 `hdb_action_log` and the problem would not exist.
 
-**Fix:** the upgrader now syncs `hdb_action_log` from blue into the clone every
-second, from the traffic switch until blue stops, plus a final pass afterwards.
-That reduces the exposure to about one second.
+**Fix, and a second bug inside the fix.** The upgrader now syncs
+`hdb_action_log` from blue into the clone every second, from the traffic switch
+until blue stops, plus a final pass afterwards.
 
-The general lesson is worth more than the specific bug: a single failure in
+The first version of that sync used `ON CONFLICT DO NOTHING`, and the harness
+failed again in exactly the same way. `hdb_action_log` rows are written twice:
+once when the action is created, and again when the handler responds. A row
+copied while still in `created` state kept its null `response_payload` on green
+permanently. The sync now upserts rows whose target copy is not yet complete.
+
+The general lesson is worth more than the specific bug. A single failure in
 34,404 requests was a real design defect, and the only reason it was findable is
 that the bar was zero. An error budget of "less than 0.01%" would have called
-this run a success and shipped the defect.
+that run a success and shipped the defect — twice.
 
 ## 7. Measured comparison
 
 | | Naive (stop, retag, start) | Zero-downtime (blue/green) |
 |---|---|---|
 | Probe target | published port, no proxy | via HAProxy |
-| Longest contiguous outage | **1566 ms** | **see §8** |
-| Failed requests | **177** | |
-| Requests observed | 34,400 | 34,404 |
+| **Longest contiguous outage** | **1566 ms** | **0 ms** |
+| **Failed requests** | **177** | **0** |
+| Requests observed | 34,400 | 34,400 |
 | Incorrect results | 0 | 0 |
-| Lost events | 0 | 0 |
-| Missed subscription rows | 0 | 0 |
+| Lost events (of ~750) | 0 | 0 |
+| Missed subscription rows (of ~1187) | 0 | 0 |
 | Subscription drops | 14 | 2 |
-| Max reconnect | 262 ms | 114 ms |
+| Max reconnect | 262 ms | 116 ms |
+| Cron fires after upgrade | 3 | 5 |
+| Proxy retries | n/a | 0 |
 
 The naive figure is the **best case**: images pre-pulled, fast host, small
 catalog migration. A real upgrade that has to pull a ~600 MB image would be down
@@ -139,21 +147,23 @@ the difference between a harness that flatters the fix and one that tests it.
 ## 8. Where the time actually goes in a zero-downtime upgrade
 
 ```
-+120010ms  upgrade.start
-+120022ms  preflight.blue.ok           12ms
-+120471ms  metadata.cloned            420ms   (200 cron events preserved)
-+122104ms  green.ready               1633ms
-+122229ms  green.verified             118ms   (26 correctness probes)
-+122264ms  traffic.switch              35ms
-+152297ms  drain.complete           30033ms   (timed out, 2 residual)
-+222738ms  blue.stopped             70441ms
++120011ms  upgrade.start
++120023ms  preflight.blue.ok           12ms
++120411ms  metadata.cloned            354ms   (200 cron events preserved)
++121733ms  green.ready               1322ms
++121844ms  green.verified             104ms   (26 correctness probes)
++121885ms  traffic.switch              41ms
++152020ms  drain.complete           30135ms   (timed out, 2 residual)
++222465ms  blue.stopped             70445ms
++222860ms  actionlog.reconciled
++222865ms  upgrade.end             102854ms total
 ```
 
-The switch itself takes **35 milliseconds**. Everything else is waiting: 30s for
+The switch itself takes **41 milliseconds**. Everything else is waiting: 30s for
 the drain to time out on two held websockets, and 70s for blue's grace period.
 
 Both are configurable and neither affects availability — traffic has already
-moved. But it means a "zero-downtime upgrade" takes about 100 seconds of
+moved. But it means a "zero-downtime upgrade" takes about 103 seconds of
 wall-clock, almost all of it deliberate patience.
 
 The drain reaching its timeout with 2 residual connections is expected: those
