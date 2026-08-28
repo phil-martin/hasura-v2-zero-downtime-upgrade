@@ -224,6 +224,22 @@ export async function containerRunning(container: string): Promise<boolean> {
   }
 }
 
+/** The container's IP on the compose network, as Docker sees it. */
+export async function containerIp(container: string): Promise<string | null> {
+  try {
+    const { stdout } = await docker([
+      'inspect',
+      container,
+      '--format',
+      '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}',
+    ])
+    const ip = stdout.trim()
+    return /^\d+\.\d+\.\d+\.\d+$/.test(ip) ? ip : null
+  } catch {
+    return null
+  }
+}
+
 export async function currentImage(container: string): Promise<string | null> {
   try {
     const { stdout } = await docker(['inspect', container, '--format', '{{.Config.Image}}'])

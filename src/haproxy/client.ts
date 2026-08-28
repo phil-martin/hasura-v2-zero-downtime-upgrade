@@ -120,6 +120,27 @@ export class HaproxyClient {
   }
 
   /**
+   * Point a server at an explicit address.
+   *
+   * Green does not exist when HAProxy boots, so its hostname cannot resolve and
+   * it sits in `MAINT (resolution)`. Waiting for HAProxy's DNS refresh to
+   * notice the new container works, but its timing depends on `hold` intervals
+   * and would make the switch's duration a function of DNS luck. Setting the
+   * address from Docker's own view of the container is deterministic.
+   *
+   * Must be called while the server is still in maintenance, before setting it
+   * ready.
+   */
+  async setServerAddr(backend: string, server: string, ip: string, port: number): Promise<void> {
+    const out = await this.command(`set server ${backend}/${server} addr ${ip} port ${port}`)
+    const trimmed = out.trim()
+    // HAProxy echoes a confirmation line on success here, unlike `state`.
+    if (/error|not found|cannot/i.test(trimmed)) {
+      throw new Error(`haproxy rejected addr change for ${backend}/${server}: ${trimmed}`)
+    }
+  }
+
+  /**
    * Wait until a draining server holds no sessions.
    *
    * Websocket subscriptions are counted in `scur` and will hold until their

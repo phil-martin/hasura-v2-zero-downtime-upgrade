@@ -39,9 +39,22 @@ describe('naive upgrade — stop, retag, start', () => {
     expect(result.scorecard.markers.map((m) => m.name)).toContain('upgrade.end')
 
     // Damage floor.
-    expect(h.longestContiguousOutageMs).toBeGreaterThan(2_000)
-    expect(h.failedRequests).toBeGreaterThan(0)
+    //
+    // Set at 800ms against a measured 1566ms on this machine. The measurement
+    // is the BEST case for the naive path: the image was already pulled, the
+    // host is fast, and the catalog migration was small. A real upgrade that
+    // has to pull ~600MB would be down for minutes. The floor is set below the
+    // observed value so the test tracks "the naive path causes real downtime"
+    // rather than a machine-specific number — but it is deliberately well above
+    // zero, because the whole point is to notice if the harness ever stops
+    // detecting this.
+    expect(h.longestContiguousOutageMs).toBeGreaterThan(800)
+    expect(h.failedRequests).toBeGreaterThan(20)
     expect(result.scorecard.overall.byKind.unavailable).toBeGreaterThan(0)
+
+    // The proxy must not be in the path for this measurement. If it were, its
+    // conn-failure retry would absorb the gap and the baseline would be a lie.
+    expect(result.scorecard.probeTarget).toBe('direct-blue')
 
     // Subscriptions cannot survive the process being replaced.
     expect(h.subscriptionDrops).toBeGreaterThan(0)

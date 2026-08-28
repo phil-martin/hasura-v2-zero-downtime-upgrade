@@ -22,7 +22,12 @@ function makeClient(url: string, adminSecret: string): Client {
     webSocketImpl: WebSocket,
     // Hasura reads auth from the connection_init payload's `headers` object.
     connectionParams: { headers: { 'x-hasura-admin-secret': adminSecret } },
-    lazy: false,
+    // Lazy so the socket opens when the subscription starts and connection
+    // failures surface through the iterator, where they are measured. With
+    // `lazy: false` they instead go to graphql-ws's `onNonLazyError`, which
+    // defaults to console.error and dumps an entire CloseEvent per drop.
+    lazy: true,
+    onNonLazyError: () => {},
     // Reconnection is handled explicitly below rather than by the library, so
     // that drop and reconnect timings can be measured and, for the streaming
     // subscription, so the cursor can be advanced on resume.

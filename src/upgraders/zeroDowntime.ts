@@ -3,10 +3,12 @@ import { waitHealthy } from '../hasura/client.js'
 import { BACKEND, BLUE, GREEN, HaproxyClient } from '../haproxy/client.js'
 import {
   BLUE_CONTAINER,
+  GREEN_CONTAINER,
   adminClient,
   cloneMetadataDb,
   compose,
   containerEnvVar,
+  containerIp,
   containerRunning,
   dbNameFromUrl,
   dropDatabase,
@@ -130,12 +132,20 @@ export const zeroDowntimeUpgrader: Upgrader = {
     })
 
     // --- 5. Switch traffic --------------------------------------------------
+    // Point HAProxy at green's actual address before enabling it. Green did not
+    // exist when HAProxy booted, so its hostname never resolved and it sits in
+    // MAINT (resolution); relying on the DNS refresh to notice would make the
+    // switch's duration depend on `hold` timing rather than on us.
+    const greenIp = await containerIp(GREEN_CONTAINER)
+    if (!greenIp) await abort('gate-address', 'could not determine green container IP')
+    await hap.setServerAddr(BACKEND, GREEN, greenIp!, 8080)
+
     // Green becomes ready BEFORE blue starts draining, so there is never an
     // instant with no ready backend.
     await hap.setServerState(BACKEND, GREEN, 'ready')
     const greenStatus = await hap.waitServerStatus(BACKEND, GREEN, (s) => s.startsWith('UP'), 60_000)
     await hap.setServerState(BACKEND, BLUE, 'drain')
-    ctx.timeline.marker('traffic.switch', { greenStatus })
+    ctx.timeline.marker('traffic.switch', { greenStatus, greenIp })
 
     // --- 6. Drain blue ------------------------------------------------------
     // Websocket subscriptions hold their sessions, so this is where the
@@ -196,6 +206,10 @@ export const zeroDowntimeUpgrader: Upgrader = {
       await waitHealthy(adminClient(cfg.blueDirectUrl), 300_000)
       ctx.timeline.marker('rollback.blue.restarted', { ms: Date.now() - started })
     }
+
+    // Blue may have been recreated since HAProxy last resolved it.
+    const blueIp = await containerIp(BLUE_CONTAINER)
+    if (blueIp) await hap.setServerAddr(BACKEND, BLUE, blueIp, 8080).catch(() => {})
 
     await hap.setServerState(BACKEND, BLUE, 'ready')
     const blueStatus = await hap.waitServerStatus(BACKEND, BLUE, (s) => s.startsWith('UP'), 60_000)
