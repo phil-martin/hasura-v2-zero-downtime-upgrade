@@ -56,3 +56,41 @@ don't re-litigate them.
 Deferred (YAGNI): chaining 2.48.4 → 2.49.5 → 2.50.1 in one run. The timed-action schedule
 permits it, but it forces blue/green role alternation across three versions and there is
 no evidence yet that we need it.
+
+## 2026-08-28 — Empirical outcomes
+
+The design named several open questions and residual risks. All are now answered
+by measurement rather than assumption. Full detail in `docs/findings.md`.
+
+| Question from the design | Answer |
+|---|---|
+| Does 2.48.4 → 2.50.1 cross a catalog bump? | **No.** Both are catalog version 48. The clone bought nothing for this pair — decision #9's accepted trade-off turned out to cost more than it returned here. |
+| Does the shared source `hdb_catalog` bite during overlap? | **Not observed.** Zero lost events across every run. It remains a real shared surface, just not one that caused damage for this version pair. |
+| Is cloning (vs a fresh metadata DB) actually necessary? | **Yes.** Hasura pre-generates 200 future cron events into the metadata store; a fresh database would discard all of them. |
+| How much downtime does the naive path really cause? | **1566 ms** — far less than predicted, because Hasura keeps serving HTTP throughout its entire graceful shutdown. The outage is only the container gap. |
+
+### Corrections to the design made during implementation
+
+1. **The naive baseline was being measured through HAProxy** — the very component
+   that is part of the fix. Its `retry-on conn-failure` absorbed the container
+   gap and produced a false "zero downtime" result for stop/retag/start. The
+   naive path now targets the directly-published port, which is what a community
+   deployment actually exposes. Without this correction the whole project would
+   have concluded the fix was unnecessary.
+
+2. **The clone orphans in-flight async actions.** Not anticipated in the design.
+   Green reads the clone while blue serves for ~100 more seconds, so an async
+   action created on blue in that window writes its result where green can never
+   see it. Fixed by syncing `hdb_action_log` every second from the switch until
+   blue stops. Found by the harness, not by inspection.
+
+3. **Proxy integrity counters added.** "0 failed requests" is otherwise
+   indistinguishable from "the proxy hid a real gap" — and correction #1 proved
+   that failure mode is not hypothetical.
+
+### Reflection on decision #10 (rates over a boolean)
+
+The rate-based scorecard was the right call for reporting, but the *policy* bar
+staying at zero is what actually found the bugs. The first zero-downtime run had
+one failure in 34,404 requests — 0.003% — and that single failure was a genuine
+design defect. Any error budget would have shipped it.
