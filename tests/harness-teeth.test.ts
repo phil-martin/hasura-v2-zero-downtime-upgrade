@@ -20,7 +20,11 @@ describe('harness teeth — injected faults must be detected', () => {
     await resetStackTo(cfg.fromVersion)
   }, 600_000)
 
-  it('detects a 2-second pause as unavailability, sized correctly', async () => {
+  it('detects a short pause as a latency excursion, not as downtime', async () => {
+    // A paused container still accepts TCP but never answers, so requests hang
+    // for the duration and then complete. With a 10s client timeout, a 2s pause
+    // produces no failures at all — it is degradation, not an outage, and the
+    // harness must say so rather than inventing downtime that users never saw.
     const result = await runHarness({
       profileName: 'fast',
       policyName: 'informational',
@@ -29,24 +33,55 @@ describe('harness teeth — injected faults must be detected', () => {
     })
     report('TEETH: 2s pause', result)
 
-    expect(result.scorecard.overall.byKind.unavailable + result.scorecard.overall.byKind.timeout).toBeGreaterThan(0)
-    // Sized, not just present: a harness that reports "some outage" for a 2s
-    // pause and also for a 60s one is not measuring anything useful.
-    expect(result.scorecard.headline.longestContiguousOutageMs).toBeGreaterThan(1_000)
-    expect(result.scorecard.headline.longestContiguousOutageMs).toBeLessThan(30_000)
+    const before = result.scorecard.windows.find((w) => w.window.name === 'before')
+    const fault = result.scorecard.windows.find((w) => w.window.name === 'fault.pause')
+    expect(before).toBeDefined()
+    expect(fault).toBeDefined()
+
+    // Baseline is a few milliseconds; the fault window must show the stall.
+    expect(before!.latency.p99).toBeLessThan(200)
+    expect(fault!.latency.max).toBeGreaterThan(1_500)
+    // And it must NOT be reported as downtime, because nothing failed.
+    expect(result.scorecard.headline.longestContiguousOutageMs).toBe(0)
   }, 900_000)
 
-  it('detects SIGKILL as unavailability and drops subscriptions', async () => {
+  it('detects a pause longer than the client timeout as a sized outage', async () => {
+    // Long enough that HAProxy's health check marks blue down (inter 1s, fall 2)
+    // and requests start getting 503s, and long enough that hung requests
+    // exceed the 10s client timeout. This is the case that IS downtime.
     const result = await runHarness({
       profileName: 'fast',
       policyName: 'informational',
       upgraderName: 'none',
+      faults: [{ atMs: 25_000, run: (t) => pauseContainer(BLUE_CONTAINER, 15_000, t) }],
+    })
+    report('TEETH: 15s pause', result)
+
+    expect(result.scorecard.overall.byKind.unavailable + result.scorecard.overall.byKind.timeout).toBeGreaterThan(0)
+    // Sized, not merely present: a harness reporting "some outage" for both a
+    // 2s pause and a 15s one would not be measuring anything useful.
+    expect(result.scorecard.headline.longestContiguousOutageMs).toBeGreaterThan(3_000)
+    expect(result.scorecard.headline.longestContiguousOutageMs).toBeLessThan(40_000)
+  }, 900_000)
+
+  it('detects SIGKILL as unavailability when no proxy is absorbing it', async () => {
+    // Targeted directly at the published port. Through HAProxy this fault is
+    // invisible: `retry-on conn-failure` retries the refused connections
+    // against the restarted container and every request succeeds. That is the
+    // proxy working as intended, but it means the proxy must be out of the path
+    // for this to test the harness rather than the proxy.
+    const result = await runHarness({
+      profileName: 'fast',
+      policyName: 'informational',
+      upgraderName: 'none',
+      probeTarget: 'direct-blue',
       faults: [{ atMs: 30_000, run: (t) => killAndRestartBlue(t, cfg.fromVersion) }],
     })
-    report('TEETH: SIGKILL', result)
+    report('TEETH: SIGKILL (direct)', result)
 
     expect(result.scorecard.headline.failedRequests).toBeGreaterThan(0)
-    expect(result.scorecard.headline.longestContiguousOutageMs).toBeGreaterThan(2_000)
+    expect(result.scorecard.overall.byKind.unavailable).toBeGreaterThan(0)
+    expect(result.scorecard.headline.longestContiguousOutageMs).toBeGreaterThan(200)
     expect(result.scorecard.headline.subscriptionDrops).toBeGreaterThan(0)
   }, 900_000)
 
