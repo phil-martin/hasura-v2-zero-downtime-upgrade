@@ -187,3 +187,8 @@ shipped the bug each time.
 - [`docs/superpowers/specs/`](docs/superpowers/specs/) — the design this was built from
 - [`docs/superpowers/plans/`](docs/superpowers/plans/) — the implementation plan, with what deviated from it and why
 - [`docs/superpowers/decisions.md`](docs/superpowers/decisions.md) — every design decision, and how the measurements later judged it
+
+## License
+
+Public domain, via [The Unlicense](LICENSE). Copy it, change it, sell it, ship it
+— no attribution, no conditions.

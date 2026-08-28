@@ -2,6 +2,7 @@
   "name": "hasura-v2-zero-downtime-upgrade",
   "version": "0.1.0",
   "private": true,
+  "license": "Unlicense",
   "type": "module",
   "engines": {
     "node": ">=22"
