@@ -24,6 +24,9 @@ export function deriveWindows(markers: readonly Marker[], runStart: number, runE
   const starts = markers
     .filter((m) => m.name.endsWith('.start'))
     .map((m) => ({ prefix: m.name.slice(0, -'.start'.length), t: m.t }))
+    // `run.start`/`run.end` bound the whole run rather than an orchestrator
+    // action; treating them as an action would collapse every window into one.
+    .filter((s) => s.prefix !== 'run')
     .sort((a, b) => a.t - b.t)
 
   const actions: Window[] = []
