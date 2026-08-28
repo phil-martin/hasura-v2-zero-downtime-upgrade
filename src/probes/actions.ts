@@ -48,6 +48,13 @@ export function actionProbes(): Probe[] {
             continue
           }
           const res = (polled.data as any)?.slowEcho
+          if (res === null || res === undefined) {
+            // Distinct from "still pending": the engine cannot see this action
+            // at all. Across a metadata clone that means the row was never
+            // carried over, which is a different bug entirely.
+            lastDetail = 'action not visible to the serving engine'
+            continue
+          }
           if (res?.errors) {
             return fail(polled.latencyMs, 'wrong-result', `async action errored: ${JSON.stringify(res.errors).slice(0, 200)}`)
           }
@@ -61,7 +68,7 @@ export function actionProbes(): Probe[] {
             }
             return ok(latencyMs)
           }
-          lastDetail = 'output still null'
+          lastDetail = 'row present but output still null'
         }
         return fail(created.latencyMs, 'timeout', `async action never completed: ${lastDetail}`)
       },

@@ -85,6 +85,34 @@ export const zeroDowntimeUpgrader: Upgrader = {
     })
     state = { originalMetadataDb, cloneDb, blueStopped: false }
 
+    // --- 2b. Start carrying async action results across ---------------------
+    // The orphan window opens the moment the clone is taken, not at the switch:
+    // blue keeps accepting async actions and writing their results to the
+    // original metadata database, which green will never read. Starting the
+    // sync here rather than at the switch removes the ~1.6s of green's boot and
+    // verification from the exposure.
+    // Declared here rather than inside the switch step so the abort path, which
+    // can fire later, is able to stop it. An aborted upgrade must not leave a
+    // background loop writing to a database it is about to drop.
+    let syncingActions = true
+    let syncTicks = 0
+    let syncCopied = 0
+    const syncErrors: string[] = []
+    const actionSync = (async () => {
+      while (syncingActions) {
+        try {
+          const r = await copyActionLog(originalMetadataDb, cloneDb)
+          syncCopied += r.copied
+        } catch (err) {
+          // Recorded rather than swallowed: a silently failing sync looks
+          // exactly like a working one from the marker's point of view.
+          if (syncErrors.length < 5) syncErrors.push(String(err).slice(0, 200))
+        }
+        syncTicks++
+        await new Promise((r) => setTimeout(r, 500))
+      }
+    })()
+
     // --- 3. Boot green against the clone -----------------------------------
     ctx.log(`starting green on ${cfg.toVersion} against ${cloneDb}`)
     const bootStarted = Date.now()
@@ -98,11 +126,6 @@ export const zeroDowntimeUpgrader: Upgrader = {
     ctx.timeline.marker('green.ready', { ms: Date.now() - bootStarted })
 
     // --- 4. Gate on green ---------------------------------------------------
-    // Declared here so the abort path can stop it. The address gate can fire
-    // after the sync loop has started, and an aborted upgrade must not leave a
-    // background loop writing to a database it is about to drop.
-    let syncingActions = false
-
     const abort = async (stage: string, reason: string, detail?: unknown) => {
       ctx.log(`ABORTING at ${stage}: ${reason}`)
       syncingActions = false
@@ -135,24 +158,7 @@ export const zeroDowntimeUpgrader: Upgrader = {
       ms: Date.now() - verifyStarted,
     })
 
-    // --- 5. Keep async action results reachable across the switch -----------
-    // Blue keeps serving until it is drained and stopped, but green reads the
-    // clone. An async action created on blue after the clone was taken writes
-    // its result somewhere green cannot see, so the client polls forever.
-    //
-    // The exposure is only the moments around the switch, but it is real: the
-    // first zero-downtime run failed on exactly one such action. Syncing every
-    // second from here until blue stops reduces the window to about a second,
-    // which is well inside any sane client's poll budget.
-    syncingActions = true
-    const actionSync = (async () => {
-      while (syncingActions) {
-        await copyActionLog(originalMetadataDb, cloneDb).catch(() => {})
-        await new Promise((r) => setTimeout(r, 1_000))
-      }
-    })()
-
-    // --- 6. Switch traffic --------------------------------------------------
+    // --- 5. Switch traffic --------------------------------------------------
     // Point HAProxy at green's actual address before enabling it. Green did not
     // exist when HAProxy booted, so its hostname never resolved and it sits in
     // MAINT (resolution); relying on the DNS refresh to notice would make the
@@ -168,32 +174,37 @@ export const zeroDowntimeUpgrader: Upgrader = {
     await hap.setServerState(BACKEND, BLUE, 'drain')
     ctx.timeline.marker('traffic.switch', { greenStatus, greenIp })
 
-    // --- 7. Drain blue ------------------------------------------------------
+    // --- 6. Drain blue ------------------------------------------------------
     // Websocket subscriptions hold their sessions, so this is where the
     // reconnect budget is spent. A residual count is a measurement, not an
     // error: it is recorded and the upgrade proceeds.
     const drain = await hap.waitDrained(BACKEND, BLUE, DRAIN_TIMEOUT_MS)
     ctx.timeline.marker('drain.complete', drain)
 
-    // --- 8. Stop blue -------------------------------------------------------
+    // --- 7. Stop blue -------------------------------------------------------
     ctx.log('stopping blue with full graceful-shutdown grace period')
     const stopStarted = Date.now()
     await compose(['stop', 'hasura-blue'], versionEnv({ blueMetadataDb: originalMetadataDb }), 180_000)
     state.blueStopped = true
     ctx.timeline.marker('blue.stopped', { ms: Date.now() - stopStarted })
 
-    // --- 9. Final action-log reconciliation ---------------------------------
+    // --- 8. Final action-log reconciliation ---------------------------------
     // Blue is definitely not writing any more, so this catches anything the
-    // 1-second loop missed on its last tick.
+    // sync loop missed on its last tick.
     syncingActions = false
     await actionSync
     const actionCopy = await copyActionLog(originalMetadataDb, cloneDb).catch((err) => {
       ctx.timeline.marker('actionlog.copy.failed', { error: String(err).slice(0, 300) })
       return { copied: 0 }
     })
-    ctx.timeline.marker('actionlog.reconciled', actionCopy)
+    ctx.timeline.marker('actionlog.reconciled', {
+      finalPass: actionCopy.copied,
+      syncTicks,
+      syncCopied,
+      syncErrors,
+    })
 
-    // --- 10. Post-conditions ------------------------------------------------
+    // --- 9. Post-conditions ------------------------------------------------
     // Compared by content hash rather than resource_version: not every v2
     // release returns resource_version from export_metadata, and a hash is
     // version-independent.
