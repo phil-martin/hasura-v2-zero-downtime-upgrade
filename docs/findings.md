@@ -148,20 +148,27 @@ those runs a success and shipped the defect three times over.
 | | Naive (stop, retag, start) | Zero-downtime (blue/green) |
 |---|---|---|
 | Probe target | published port, no proxy | via HAProxy |
-| **Longest contiguous outage** | **1566 ms** | **0 ms** |
-| **Failed requests** | **177** | **0** |
-| Requests observed | 34,400 | 34,400 |
+| **Longest contiguous outage** | **1451 ms** | **0 ms** |
+| **Failed requests** | **154** (0.448%) | **0** (0.000%) |
+| Requests observed | 34,403 | 34,395 |
 | Incorrect results | 0 | 0 |
-| Lost events (of ~750) | 0 | 0 |
-| Missed subscription rows (of ~1187) | 0 | 0 |
+| GraphQL errors | 0 | 0 |
+| Events delivered | 747 / 747 | 750 / 750 |
+| Missed subscription rows | 0 | 0 |
 | Subscription drops | 14 | 2 |
-| Max reconnect | 262 ms | 116 ms |
-| Cron fires after upgrade | 3 | 5 |
-| Proxy retries | n/a | 0 |
+| Max reconnect | 263 ms | 123 ms |
+| Proxy retries | n/a (not in path) | 0 |
+
+Numbers are from the final full-suite run, in which all 25 tests passed.
 
 The naive figure is the **best case**: images pre-pulled, fast host, small
 catalog migration. A real upgrade that has to pull a ~600 MB image would be down
-for minutes.
+for minutes. Across runs it varied between 1451 ms and 1566 ms, so treat the
+magnitude — seconds, not milliseconds — rather than the exact figure.
+
+The upgrade-then-rollback run is the strongest single result: **48,169 requests,
+zero failures, 0 ms outage**, with the upgrade window and the rollback window
+each individually clean, 1049/1049 events delivered and 12 cron fires.
 
 The naive path was measured against the directly-published port, because that is
 what a community deployment exposes. Measuring it from behind HAProxy — as the

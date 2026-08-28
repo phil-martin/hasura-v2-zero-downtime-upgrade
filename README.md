@@ -12,14 +12,17 @@ Hasura v2 feature exercised continuously throughout.
 
 | | Naive (stop, retag, start) | Zero-downtime (blue/green) |
 |---|---|---|
-| **Longest contiguous outage** | **1566 ms** | **0 ms** |
-| **Failed requests** | **177** | **0** |
+| Probe target | published port, no proxy | via HAProxy |
+| **Longest contiguous outage** | **1451 ms** | **0 ms** |
+| **Failed requests** | **154** (0.448%) | **0** (0.000%) |
+| Requests observed | 34,403 | 34,395 |
 | Incorrect results | 0 | 0 |
-| Lost events (of ~750) | 0 | 0 |
-| Missed subscription rows (of ~1187) | 0 | 0 |
+| GraphQL errors | 0 | 0 |
+| Events delivered | 747 / 747 | 750 / 750 |
+| Missed subscription rows | 0 | 0 |
 | Subscription drops | 14 | 2 |
-| Max reconnect | 262 ms | 116 ms |
-| Proxy retries | n/a | 0 |
+| Max reconnect | 263 ms | 123 ms |
+| Proxy retries | n/a (not in path) | 0 |
 
 Subscription drops are expected and permitted: a GraphQL websocket is stateful
 against one process, so when that process goes away the socket dies and no proxy
@@ -47,11 +50,20 @@ reports each one's specific signature:
 
 | Injected fault | Must be detected as |
 |---|---|
-| `docker pause` for 2s | unavailability, sized between 1s and 30s |
-| `SIGKILL` | unavailability **and** subscription drops |
+| `docker pause` for 2s | a latency excursion, and **not** as downtime |
+| `docker pause` for 15s | a sized outage, between 3s and 40s |
+| `SIGKILL`, with the proxy out of the path | unavailability **and** subscription drops |
 | A deliberately corrupted expectation | `wrong-result`, and **not** as downtime |
 | Sidecar rejecting deliveries past the retry budget | permanently lost events |
 | Restart mid-subscription | drop, with a recorded reconnect |
+
+Two of those started out asserting the wrong thing, and in both cases the harness
+was right. A 2-second pause causes *no failures at all* — a paused container
+accepts TCP but never answers, so requests hang and then complete, well inside
+the 10-second client timeout. And a `SIGKILL` is invisible through HAProxy,
+because `retry-on conn-failure` retries the refused connections against the
+restarted container. Both corrections rhyme with the naive-baseline one: any
+measurement taken through the fix will flatter the fix.
 
 `tests/naive-upgrade.test.ts` asserts the naive path's damage **exceeds a
 floor** — not merely that it failed. If that damage ever drops below the floor,
@@ -103,13 +115,13 @@ remains correct insurance for version pairs that *do* cross a catalog bump, and
 it is what makes rollback a proxy flip rather than a database repair. But it is
 not free.
 
-**The bar being zero is what made this work.** The first zero-downtime run
-reported one failure in 34,404 requests. That single failure was a genuine design
+**The bar being zero is what made this work.** An early zero-downtime run reported
+one failure in 34,404 requests — 0.003%. That single failure was a genuine design
 defect: green reads the metadata clone, but blue keeps serving for ~100 more
 seconds, so an async action created on blue in that window wrote its result
-somewhere green could never see it. An error budget of "under 0.01%" would have
-called that run a success and shipped the bug — twice, because the first attempt
-at fixing it had a bug of its own.
+somewhere green could never see it. It took three attempts to fix, and an error
+budget of "under 0.01%" would have called every one of those runs a success and
+shipped the bug each time.
 
 ## Documentation
 
