@@ -1,0 +1,640 @@
+{
+  "action_sync_quote": {
+    "computeQuote": {
+      "qty": 3,
+      "unitPrice": "10.00",
+      "total": "33.00"
+    }
+  },
+  "q_aggregate": {
+    "books_aggregate": {
+      "aggregate": {
+        "count": 500,
+        "avg": {
+          "price": "25.1300000000000000"
+        },
+        "sum": {
+          "published_year": 991960
+        },
+        "max": {
+          "published_year": 2019
+        },
+        "min": {
+          "published_year": 1950
+        }
+      }
+    }
+  },
+  "q_alias_fragments": {
+    "first": [
+      {
+        "id": 1,
+        "title": "Book 0001",
+        "genre": "nonfiction"
+      }
+    ],
+    "second": [
+      {
+        "id": 2,
+        "title": "Book 0002",
+        "genre": "poetry"
+      }
+    ]
+  },
+  "q_computed_field": {
+    "books": [
+      {
+        "id": 1,
+        "price": "6.99",
+        "discounted_price": "6.12"
+      },
+      {
+        "id": 2,
+        "price": "7.99",
+        "discounted_price": "6.99"
+      },
+      {
+        "id": 3,
+        "price": "8.99",
+        "discounted_price": "7.87"
+      }
+    ]
+  },
+  "q_distinct_on": {
+    "books": [
+      {
+        "genre": "fiction",
+        "id": 5,
+        "title": "Book 0005"
+      },
+      {
+        "genre": "history",
+        "id": 4,
+        "title": "Book 0004"
+      },
+      {
+        "genre": "nonfiction",
+        "id": 1,
+        "title": "Book 0001"
+      },
+      {
+        "genre": "poetry",
+        "id": 2,
+        "title": "Book 0002"
+      },
+      {
+        "genre": "technical",
+        "id": 3,
+        "title": "Book 0003"
+      }
+    ]
+  },
+  "q_enum_filter": {
+    "books": [
+      {
+        "id": 2,
+        "genre": "poetry",
+        "title": "Book 0002"
+      },
+      {
+        "id": 3,
+        "genre": "technical",
+        "title": "Book 0003"
+      },
+      {
+        "id": 7,
+        "genre": "poetry",
+        "title": "Book 0007"
+      },
+      {
+        "id": 8,
+        "genre": "technical",
+        "title": "Book 0008"
+      },
+      {
+        "id": 12,
+        "genre": "poetry",
+        "title": "Book 0012"
+      },
+      {
+        "id": 13,
+        "genre": "technical",
+        "title": "Book 0013"
+      }
+    ]
+  },
+  "q_jsonb_contains": {
+    "books": [
+      {
+        "id": 10,
+        "tags": {
+          "topics": [
+            "t3",
+            "t10"
+          ],
+          "weight": 10,
+          "featured": true
+        }
+      },
+      {
+        "id": 20,
+        "tags": {
+          "topics": [
+            "t6",
+            "t9"
+          ],
+          "weight": 20,
+          "featured": true
+        }
+      },
+      {
+        "id": 30,
+        "tags": {
+          "topics": [
+            "t2",
+            "t8"
+          ],
+          "weight": 30,
+          "featured": true
+        }
+      },
+      {
+        "id": 40,
+        "tags": {
+          "topics": [
+            "t5",
+            "t7"
+          ],
+          "weight": 40,
+          "featured": true
+        }
+      },
+      {
+        "id": 50,
+        "tags": {
+          "topics": [
+            "t1",
+            "t6"
+          ],
+          "weight": 50,
+          "featured": true
+        }
+      }
+    ]
+  },
+  "q_nested_array_rel": {
+    "authors": [
+      {
+        "id": 3,
+        "name": "Author 003",
+        "books": [
+          {
+            "id": 2,
+            "title": "Book 0002",
+            "reviews": [
+              {
+                "id": 1,
+                "rating": 2
+              },
+              {
+                "id": 501,
+                "rating": 2
+              }
+            ]
+          },
+          {
+            "id": 52,
+            "title": "Book 0052",
+            "reviews": [
+              {
+                "id": 51,
+                "rating": 2
+              },
+              {
+                "id": 551,
+                "rating": 2
+              }
+            ]
+          },
+          {
+            "id": 102,
+            "title": "Book 0102",
+            "reviews": [
+              {
+                "id": 101,
+                "rating": 2
+              },
+              {
+                "id": 601,
+                "rating": 2
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "q_nested_object_rel": {
+    "books": [
+      {
+        "id": 7,
+        "title": "Book 0007",
+        "author": {
+          "id": 8,
+          "name": "Author 008",
+          "country": "JP",
+          "born_year": 1908
+        }
+      },
+      {
+        "id": 42,
+        "title": "Book 0042",
+        "author": {
+          "id": 43,
+          "name": "Author 043",
+          "country": "JP",
+          "born_year": 1943
+        }
+      }
+    ]
+  },
+  "q_order_limit_offset": {
+    "books": [
+      {
+        "id": 439,
+        "title": "Book 0439",
+        "price": "44.99"
+      },
+      {
+        "id": 479,
+        "title": "Book 0479",
+        "price": "44.99"
+      },
+      {
+        "id": 38,
+        "title": "Book 0038",
+        "price": "43.99"
+      },
+      {
+        "id": 78,
+        "title": "Book 0078",
+        "price": "43.99"
+      },
+      {
+        "id": 118,
+        "title": "Book 0118",
+        "price": "43.99"
+      }
+    ]
+  },
+  "q_simple_select": {
+    "books": [
+      {
+        "id": 1,
+        "title": "Book 0001",
+        "genre": "nonfiction",
+        "published_year": 1951,
+        "price": "6.99",
+        "in_print": true
+      },
+      {
+        "id": 2,
+        "title": "Book 0002",
+        "genre": "poetry",
+        "published_year": 1952,
+        "price": "7.99",
+        "in_print": true
+      },
+      {
+        "id": 3,
+        "title": "Book 0003",
+        "genre": "technical",
+        "published_year": 1953,
+        "price": "8.99",
+        "in_print": true
+      },
+      {
+        "id": 4,
+        "title": "Book 0004",
+        "genre": "history",
+        "published_year": 1954,
+        "price": "9.99",
+        "in_print": false
+      },
+      {
+        "id": 5,
+        "title": "Book 0005",
+        "genre": "fiction",
+        "published_year": 1955,
+        "price": "10.99",
+        "in_print": true
+      }
+    ]
+  },
+  "q_sql_function": {
+    "search_books": [
+      {
+        "id": 100,
+        "title": "Book 0100"
+      },
+      {
+        "id": 101,
+        "title": "Book 0101"
+      },
+      {
+        "id": 102,
+        "title": "Book 0102"
+      },
+      {
+        "id": 103,
+        "title": "Book 0103"
+      },
+      {
+        "id": 104,
+        "title": "Book 0104"
+      },
+      {
+        "id": 105,
+        "title": "Book 0105"
+      },
+      {
+        "id": 106,
+        "title": "Book 0106"
+      },
+      {
+        "id": 107,
+        "title": "Book 0107"
+      },
+      {
+        "id": 108,
+        "title": "Book 0108"
+      },
+      {
+        "id": 109,
+        "title": "Book 0109"
+      }
+    ]
+  },
+  "q_variables": {
+    "books": [
+      {
+        "id": 60,
+        "title": "Book 0060",
+        "published_year": 2010
+      },
+      {
+        "id": 61,
+        "title": "Book 0061",
+        "published_year": 2011
+      },
+      {
+        "id": 62,
+        "title": "Book 0062",
+        "published_year": 2012
+      },
+      {
+        "id": 63,
+        "title": "Book 0063",
+        "published_year": 2013
+      }
+    ]
+  },
+  "q_view": {
+    "book_stats": [
+      {
+        "genre": "fiction",
+        "book_count": 100,
+        "avg_price": "23.29",
+        "earliest_year": 1950,
+        "latest_year": 2015
+      },
+      {
+        "genre": "history",
+        "book_count": 100,
+        "avg_price": "27.09",
+        "earliest_year": 1954,
+        "latest_year": 2019
+      },
+      {
+        "genre": "nonfiction",
+        "book_count": 100,
+        "avg_price": "24.09",
+        "earliest_year": 1951,
+        "latest_year": 2016
+      },
+      {
+        "genre": "poetry",
+        "book_count": 100,
+        "avg_price": "25.09",
+        "earliest_year": 1952,
+        "latest_year": 2017
+      },
+      {
+        "genre": "technical",
+        "book_count": 100,
+        "avg_price": "26.09",
+        "earliest_year": 1953,
+        "latest_year": 2018
+      }
+    ]
+  },
+  "q_where_and_or_not": {
+    "books": [
+      {
+        "id": 50,
+        "title": "Book 0050",
+        "genre": "fiction",
+        "published_year": 2000
+      },
+      {
+        "id": 54,
+        "title": "Book 0054",
+        "genre": "history",
+        "published_year": 2004
+      },
+      {
+        "id": 55,
+        "title": "Book 0055",
+        "genre": "fiction",
+        "published_year": 2005
+      },
+      {
+        "id": 59,
+        "title": "Book 0059",
+        "genre": "history",
+        "published_year": 2009
+      },
+      {
+        "id": 65,
+        "title": "Book 0065",
+        "genre": "fiction",
+        "published_year": 2015
+      },
+      {
+        "id": 69,
+        "title": "Book 0069",
+        "genre": "history",
+        "published_year": 2019
+      },
+      {
+        "id": 125,
+        "title": "Book 0125",
+        "genre": "fiction",
+        "published_year": 2005
+      },
+      {
+        "id": 129,
+        "title": "Book 0129",
+        "genre": "history",
+        "published_year": 2009
+      },
+      {
+        "id": 130,
+        "title": "Book 0130",
+        "genre": "fiction",
+        "published_year": 2010
+      },
+      {
+        "id": 134,
+        "title": "Book 0134",
+        "genre": "history",
+        "published_year": 2014
+      }
+    ]
+  },
+  "rbac_anon_in_print_count": {
+    "books_aggregate": {
+      "aggregate": {
+        "count": 375
+      }
+    }
+  },
+  "rbac_anon_rows": {
+    "books": [
+      {
+        "id": 1,
+        "title": "Book 0001",
+        "in_print": true
+      },
+      {
+        "id": 2,
+        "title": "Book 0002",
+        "in_print": true
+      },
+      {
+        "id": 3,
+        "title": "Book 0003",
+        "in_print": true
+      },
+      {
+        "id": 5,
+        "title": "Book 0005",
+        "in_print": true
+      },
+      {
+        "id": 6,
+        "title": "Book 0006",
+        "in_print": true
+      }
+    ]
+  },
+  "rbac_other_user_rows": {
+    "reviews": [
+      {
+        "id": 11,
+        "reviewer_id": 12
+      },
+      {
+        "id": 31,
+        "reviewer_id": 12
+      },
+      {
+        "id": 51,
+        "reviewer_id": 12
+      },
+      {
+        "id": 71,
+        "reviewer_id": 12
+      },
+      {
+        "id": 91,
+        "reviewer_id": 12
+      }
+    ]
+  },
+  "rbac_user_own_review_count": {
+    "reviews_aggregate": {
+      "aggregate": {
+        "count": 100
+      }
+    }
+  },
+  "rbac_user_own_rows": {
+    "reviews": [
+      {
+        "id": 6,
+        "book_id": 7,
+        "reviewer_id": 7,
+        "rating": 2
+      },
+      {
+        "id": 26,
+        "book_id": 27,
+        "reviewer_id": 7,
+        "rating": 2
+      },
+      {
+        "id": 46,
+        "book_id": 47,
+        "reviewer_id": 7,
+        "rating": 2
+      },
+      {
+        "id": 66,
+        "book_id": 67,
+        "reviewer_id": 7,
+        "rating": 2
+      },
+      {
+        "id": 86,
+        "book_id": 87,
+        "reviewer_id": 7,
+        "rating": 2
+      }
+    ]
+  },
+  "remote_relationship": {
+    "books": [
+      {
+        "id": 7,
+        "remote_info": {
+          "shelfCode": "SH-07",
+          "warehouse": "W1"
+        }
+      },
+      {
+        "id": 8,
+        "remote_info": {
+          "shelfCode": "SH-08",
+          "warehouse": "W2"
+        }
+      }
+    ]
+  },
+  "remote_schema_query": {
+    "remotePing": "pong",
+    "remoteBookInfo": {
+      "bookId": 7,
+      "shelfCode": "SH-07",
+      "warehouse": "W1"
+    }
+  },
+  "rest_book_by_id": {
+    "books_by_pk": {
+      "id": 7,
+      "title": "Book 0007",
+      "genre": "poetry",
+      "published_year": 1957
+    }
+  }
+}
