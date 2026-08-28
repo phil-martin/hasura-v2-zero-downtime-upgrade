@@ -34,15 +34,22 @@ describe('harness teeth — injected faults must be detected', () => {
     report('TEETH: 2s pause', result)
 
     const before = result.scorecard.windows.find((w) => w.window.name === 'before')
-    const fault = result.scorecard.windows.find((w) => w.window.name === 'fault.pause')
     expect(before).toBeDefined()
-    expect(fault).toBeDefined()
 
-    // Baseline is a few milliseconds; the fault window must show the stall.
+    // Baseline is single-digit milliseconds.
     expect(before!.latency.p99).toBeLessThan(200)
-    expect(fault!.latency.max).toBeGreaterThan(1_500)
-    // And it must NOT be reported as downtime, because nothing failed.
+
+    // The stall is asserted against the OVERALL max rather than the fault
+    // window's. A request that starts before the pause and hangs through it is
+    // recorded when it completes, which is after `fault.pause.end` — so it lands
+    // in the next window, and which window catches it depends on exactly when
+    // each probe happened to fire. Overall max is the same measurement without
+    // the timing lottery.
+    expect(result.scorecard.overall.latency.max).toBeGreaterThan(1_500)
+
+    // And it must NOT be reported as downtime, because nothing actually failed.
     expect(result.scorecard.headline.longestContiguousOutageMs).toBe(0)
+    expect(result.scorecard.headline.failedRequests).toBe(0)
   }, 900_000)
 
   it('detects a pause longer than the client timeout as a sized outage', async () => {
