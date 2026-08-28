@@ -1,0 +1,453 @@
+{
+  "version": 3,
+  "sources": [
+    {
+      "name": "default",
+      "kind": "postgres",
+      "configuration": {
+        "connection_info": {
+          "database_url": {
+            "from_env": "HASURA_GRAPHQL_DATABASE_URL"
+          },
+          "isolation_level": "read-committed",
+          "use_prepared_statements": true,
+          "pool_settings": {
+            "connection_lifetime": 600,
+            "idle_timeout": 180,
+            "max_connections": 50,
+            "retries": 1
+          }
+        }
+      },
+      "tables": [
+        {
+          "table": {
+            "schema": "public",
+            "name": "genres"
+          },
+          "is_enum": true,
+          "select_permissions": [
+            {
+              "role": "user",
+              "permission": {
+                "columns": [
+                  "value",
+                  "description"
+                ],
+                "filter": {},
+                "allow_aggregations": true
+              }
+            },
+            {
+              "role": "anonymous",
+              "permission": {
+                "columns": [
+                  "value",
+                  "description"
+                ],
+                "filter": {},
+                "allow_aggregations": true
+              }
+            }
+          ]
+        },
+        {
+          "table": {
+            "schema": "public",
+            "name": "authors"
+          },
+          "array_relationships": [
+            {
+              "name": "books",
+              "using": {
+                "foreign_key_constraint_on": {
+                  "table": {
+                    "schema": "public",
+                    "name": "books"
+                  },
+                  "column": "author_id"
+                }
+              }
+            }
+          ],
+          "select_permissions": [
+            {
+              "role": "user",
+              "permission": {
+                "columns": [
+                  "id",
+                  "name",
+                  "country",
+                  "born_year"
+                ],
+                "filter": {},
+                "allow_aggregations": true
+              }
+            },
+            {
+              "role": "anonymous",
+              "permission": {
+                "columns": [
+                  "id",
+                  "name",
+                  "country"
+                ],
+                "filter": {},
+                "allow_aggregations": true
+              }
+            }
+          ]
+        },
+        {
+          "table": {
+            "schema": "public",
+            "name": "books"
+          },
+          "object_relationships": [
+            {
+              "name": "author",
+              "using": {
+                "foreign_key_constraint_on": "author_id"
+              }
+            }
+          ],
+          "array_relationships": [
+            {
+              "name": "reviews",
+              "using": {
+                "foreign_key_constraint_on": {
+                  "table": {
+                    "schema": "public",
+                    "name": "reviews"
+                  },
+                  "column": "book_id"
+                }
+              }
+            }
+          ],
+          "computed_fields": [
+            {
+              "name": "discounted_price",
+              "definition": {
+                "function": {
+                  "schema": "public",
+                  "name": "book_discounted_price"
+                },
+                "table_argument": "book_row"
+              }
+            }
+          ],
+          "remote_relationships": [
+            {
+              "name": "remote_info",
+              "definition": {
+                "to_remote_schema": {
+                  "remote_schema": "harness_remote",
+                  "lhs_fields": [
+                    "id"
+                  ],
+                  "remote_field": {
+                    "remoteBookInfo": {
+                      "arguments": {
+                        "bookId": "$id"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ],
+          "select_permissions": [
+            {
+              "role": "user",
+              "permission": {
+                "columns": [
+                  "id",
+                  "author_id",
+                  "title",
+                  "genre",
+                  "published_year",
+                  "price",
+                  "in_print",
+                  "tags"
+                ],
+                "computed_fields": [
+                  "discounted_price"
+                ],
+                "filter": {},
+                "allow_aggregations": true
+              }
+            },
+            {
+              "role": "anonymous",
+              "permission": {
+                "columns": [
+                  "id",
+                  "author_id",
+                  "title",
+                  "genre",
+                  "published_year",
+                  "in_print"
+                ],
+                "filter": {
+                  "in_print": {
+                    "_eq": true
+                  }
+                },
+                "allow_aggregations": true
+              }
+            }
+          ]
+        },
+        {
+          "table": {
+            "schema": "public",
+            "name": "reviews"
+          },
+          "object_relationships": [
+            {
+              "name": "book",
+              "using": {
+                "foreign_key_constraint_on": "book_id"
+              }
+            }
+          ],
+          "select_permissions": [
+            {
+              "role": "user",
+              "permission": {
+                "columns": [
+                  "id",
+                  "book_id",
+                  "reviewer_id",
+                  "rating"
+                ],
+                "filter": {
+                  "reviewer_id": {
+                    "_eq": "X-Hasura-User-Id"
+                  }
+                },
+                "allow_aggregations": true
+              }
+            }
+          ]
+        },
+        {
+          "table": {
+            "schema": "public",
+            "name": "book_stats"
+          }
+        },
+        {
+          "table": {
+            "schema": "public",
+            "name": "orders"
+          },
+          "event_triggers": [
+            {
+              "name": "on_orders_update",
+              "definition": {
+                "enable_manual": false,
+                "update": {
+                  "columns": "*"
+                }
+              },
+              "retry_conf": {
+                "num_retries": 3,
+                "interval_sec": 5,
+                "timeout_sec": 10
+              },
+              "webhook": "http://sidecar:8081/webhook/event"
+            }
+          ]
+        },
+        {
+          "table": {
+            "schema": "public",
+            "name": "counters"
+          }
+        },
+        {
+          "table": {
+            "schema": "public",
+            "name": "seq_stream"
+          }
+        },
+        {
+          "table": {
+            "schema": "public",
+            "name": "events_source"
+          },
+          "event_triggers": [
+            {
+              "name": "on_events_source_insert",
+              "definition": {
+                "enable_manual": false,
+                "insert": {
+                  "columns": "*"
+                }
+              },
+              "retry_conf": {
+                "num_retries": 3,
+                "interval_sec": 5,
+                "timeout_sec": 10
+              },
+              "webhook": "http://sidecar:8081/webhook/event"
+            }
+          ]
+        }
+      ],
+      "functions": [
+        {
+          "function": {
+            "schema": "public",
+            "name": "search_books"
+          }
+        }
+      ]
+    }
+  ],
+  "remote_schemas": [
+    {
+      "name": "harness_remote",
+      "definition": {
+        "url": "http://sidecar:8081/remote/graphql",
+        "timeout_seconds": 10,
+        "forward_client_headers": false
+      }
+    }
+  ],
+  "custom_types": {
+    "objects": [
+      {
+        "name": "QuoteOutput",
+        "fields": [
+          {
+            "name": "qty",
+            "type": "Int!"
+          },
+          {
+            "name": "unitPrice",
+            "type": "String!"
+          },
+          {
+            "name": "total",
+            "type": "String!"
+          }
+        ]
+      },
+      {
+        "name": "EchoOutput",
+        "fields": [
+          {
+            "name": "echoed",
+            "type": "String!"
+          },
+          {
+            "name": "length",
+            "type": "Int!"
+          }
+        ]
+      }
+    ]
+  },
+  "actions": [
+    {
+      "name": "computeQuote",
+      "definition": {
+        "handler": "http://sidecar:8081/action/quote",
+        "type": "query",
+        "kind": "synchronous",
+        "arguments": [
+          {
+            "name": "qty",
+            "type": "Int!"
+          },
+          {
+            "name": "unitPrice",
+            "type": "String!"
+          }
+        ],
+        "output_type": "QuoteOutput!",
+        "forward_client_headers": false,
+        "timeout": 10
+      },
+      "permissions": [
+        {
+          "role": "user"
+        },
+        {
+          "role": "anonymous"
+        }
+      ]
+    },
+    {
+      "name": "slowEcho",
+      "definition": {
+        "handler": "http://sidecar:8081/action/slow-echo",
+        "type": "mutation",
+        "kind": "asynchronous",
+        "arguments": [
+          {
+            "name": "message",
+            "type": "String!"
+          }
+        ],
+        "output_type": "EchoOutput!",
+        "forward_client_headers": false,
+        "timeout": 10
+      },
+      "permissions": [
+        {
+          "role": "user"
+        }
+      ]
+    }
+  ],
+  "cron_triggers": [
+    {
+      "name": "heartbeat",
+      "webhook": "http://sidecar:8081/webhook/cron",
+      "schedule": "* * * * *",
+      "include_in_metadata": true,
+      "payload": {
+        "kind": "heartbeat"
+      },
+      "retry_conf": {
+        "num_retries": 2,
+        "retry_interval_seconds": 10,
+        "timeout_seconds": 10,
+        "tolerance_seconds": 21600
+      }
+    }
+  ],
+  "query_collections": [
+    {
+      "name": "harness_queries",
+      "definition": {
+        "queries": [
+          {
+            "name": "BookById",
+            "query": "query BookById($id: Int!) { books_by_pk(id: $id) { id title genre published_year } }"
+          }
+        ]
+      }
+    }
+  ],
+  "rest_endpoints": [
+    {
+      "name": "book_by_id",
+      "url": "book/:id",
+      "methods": [
+        "GET"
+      ],
+      "definition": {
+        "query": {
+          "collection_name": "harness_queries",
+          "query_name": "BookById"
+        }
+      },
+      "comment": "RESTified book lookup, exposed at /api/rest/book/:id"
+    }
+  ]
+}
