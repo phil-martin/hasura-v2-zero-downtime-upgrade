@@ -386,3 +386,50 @@ Implements spec §10.2 as eight observable gates.
 - Spec §8.1 (event settle window) covered in Task 11 and used by Task 12.
 - Spec §14 residual risk "shared source catalog" is measured, not solved — Task 19 findings.
 - Spec §11 chained multi-version upgrades intentionally NOT planned (YAGNI, per spec).
+
+---
+
+## Completion status — 2026-08-28
+
+All 19 tasks implemented. Measured results in `docs/findings.md`.
+
+### Deviations from the plan, and why
+
+**Task 4 — sidecar written as `.mjs`, not `.ts`.** Avoids a build step inside the
+container; the harness never typechecks it.
+
+**Task 15 — the naive baseline needed a probe-target change the plan did not
+anticipate.** The plan had every probe going through HAProxy. Measured that way,
+the naive stop/retag/start reported *zero* downtime, because HAProxy's
+`retry-on conn-failure` absorbed the container gap. The naive path now targets
+the directly-published port, which is what a community deployment exposes.
+Without this the whole project would have concluded the fix was unnecessary.
+
+**Task 16 — two teeth tests asserted the wrong signature.** A 2-second pause
+produces no failures (requests hang and then complete, well inside the 10s client
+timeout), and a SIGKILL is invisible through HAProxy. In both cases the harness
+was right and the test was wrong. Split into a short-pause test asserting a
+latency excursion that is *not* misreported as downtime, and a long-pause test
+asserting the genuine outage signature.
+
+**Task 17 — one defect found that the design did not anticipate.** The metadata
+clone orphans in-flight async actions: green reads the clone while blue serves
+for ~100 more seconds, so an async action created on blue in that window writes
+its result where green can never see it. Fixed by syncing `hdb_action_log` from
+clone time until blue stops. Took three attempts; see finding §6.
+
+### Additions not in the plan
+
+- **Proxy integrity counters.** HAProxy retry/redispatch/error deltas per run, so
+  "0 failed requests" cannot be an unnoticed artefact of proxy retries.
+- **Failure samples on the scorecard.** Reporting "1 failed request" without
+  saying which probe and why made a near-miss undiagnosable without re-running a
+  five-minute job. That one failure turned out to be a real design defect.
+- **Run persistence** to `runs/*.json`, so a run can be re-examined without
+  re-running it.
+
+### Not built, deliberately
+
+Chained multi-version upgrades (planned as YAGNI, still unneeded). A
+`shared-metadata` strategy alongside the cloned one — now *recommended* on the
+evidence in findings §1 and §11, but outside the scope agreed for this pass.
