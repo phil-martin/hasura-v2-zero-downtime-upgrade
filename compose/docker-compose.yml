@@ -1,0 +1,103 @@
+name: hzdu
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    command:
+      # Room for two engines plus the harness's own direct connections.
+      - "postgres"
+      - "-c"
+      - "max_connections=300"
+
+  sidecar:
+    build:
+      context: ../sidecar
+    ports:
+      - "127.0.0.1:8081:8081"
+    environment:
+      PORT: "8081"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8081/_harness/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  hasura-blue:
+    image: hasura/graphql-engine:${BLUE_VERSION:-v2.48.4}
+    # Compose defaults stop_grace_period to 10s, which would SIGKILL straight
+    # through Hasura's 60s graceful shutdown and abandon in-flight event
+    # processing. This must stay above HASURA_GRAPHQL_GRACEFUL_SHUTDOWN_TIMEOUT.
+    stop_grace_period: 70s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      sidecar:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8181:8080"
+    environment:
+      HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:postgres@postgres:5432/appdb
+      HASURA_GRAPHQL_METADATA_DATABASE_URL: ${BLUE_METADATA_DB_URL:-postgres://postgres:postgres@postgres:5432/hasura_metadata}
+      HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_ADMIN_SECRET:-harness-admin-secret}
+      HASURA_GRAPHQL_ENABLE_CONSOLE: "false"
+      HASURA_GRAPHQL_DEV_MODE: "true"
+      HASURA_GRAPHQL_GRACEFUL_SHUTDOWN_TIMEOUT: "60"
+      HASURA_GRAPHQL_UNAUTHORIZED_ROLE: anonymous
+      # Numeric and bigint come back as strings, which keeps deep-equality
+      # comparisons in the oracle free of float-precision noise.
+      HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES: "true"
+      HASURA_GRAPHQL_ENABLED_LOG_TYPES: "startup,http-log,webhook-log,websocket-log"
+      SIDECAR_URL: http://sidecar:8081
+
+  hasura-green:
+    image: hasura/graphql-engine:${GREEN_VERSION:-v2.50.1}
+    stop_grace_period: 70s
+    profiles: ["green"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      sidecar:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8182:8080"
+    environment:
+      HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:postgres@postgres:5432/appdb
+      # Set to a clone by the zero-downtime upgrader, so green's catalog
+      # migration never touches the metadata database blue is serving from.
+      HASURA_GRAPHQL_METADATA_DATABASE_URL: ${GREEN_METADATA_DB_URL:-postgres://postgres:postgres@postgres:5432/hasura_metadata}
+      HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_ADMIN_SECRET:-harness-admin-secret}
+      HASURA_GRAPHQL_ENABLE_CONSOLE: "false"
+      HASURA_GRAPHQL_DEV_MODE: "true"
+      HASURA_GRAPHQL_GRACEFUL_SHUTDOWN_TIMEOUT: "60"
+      HASURA_GRAPHQL_UNAUTHORIZED_ROLE: anonymous
+      HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES: "true"
+      HASURA_GRAPHQL_ENABLED_LOG_TYPES: "startup,http-log,webhook-log,websocket-log"
+      SIDECAR_URL: http://sidecar:8081
+
+  haproxy:
+    image: haproxy:2.9-alpine
+    volumes:
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - "127.0.0.1:8080:8080"   # the only endpoint the harness's probes use
+      - "127.0.0.1:9999:9999"   # runtime API, driven by the upgrade orchestrator
+      - "127.0.0.1:8404:8404"   # stats page, for humans debugging a run
+    depends_on:
+      - postgres
+
+volumes:
+  pgdata:

@@ -1,0 +1,10 @@
+{
+  "name": "hzdu-sidecar",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "server.mjs",
+  "dependencies": {
+    "graphql": "^16.9.0"
+  }
+}

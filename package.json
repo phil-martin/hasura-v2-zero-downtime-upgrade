@@ -1,0 +1,34 @@
+{
+  "name": "hasura-v2-zero-downtime-upgrade",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "stack:up": "tsx src/cli.ts stack-up",
+    "stack:down": "tsx src/cli.ts stack-down",
+    "stack:reset": "tsx src/cli.ts stack-reset",
+    "seed": "tsx src/cli.ts seed",
+    "snapshot": "tsx src/cli.ts snapshot",
+    "harness": "tsx src/cli.ts run",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "graphql": "^16.9.0",
+    "graphql-ws": "^5.16.0",
+    "pg": "^8.13.1",
+    "undici": "^6.21.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/pg": "^8.11.10",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
