@@ -179,21 +179,41 @@ export async function copyActionLog(fromDb: string, toDb: string): Promise<{ cop
   const names = cols.map((c) => c.column_name)
   if (names.length === 0) return { copied: 0 }
 
-  // Incremental: only rows the target does not already have. Re-inserting every
-  // row on every tick would turn a 1-second sync loop into hundreds of
-  // redundant statements per second.
-  const existing = new Set(
-    (await sql<{ id: string }>(toDb, `SELECT id::text AS id FROM hdb_catalog.hdb_action_log`)).map((r) => r.id),
+  // What the target already has, and whether its copy is finished. An action
+  // row is written when the action is created and updated again when the
+  // handler responds, so copying once with ON CONFLICT DO NOTHING is not
+  // enough: a row copied while still 'created' would stay pending on green
+  // forever, which is exactly the failure the harness caught.
+  const targetState = new Map(
+    (
+      await sql<{ id: string; done: boolean }>(
+        toDb,
+        `SELECT id::text AS id, (response_received_at IS NOT NULL) AS done FROM hdb_catalog.hdb_action_log`,
+      )
+    ).map((r) => [r.id, r.done]),
   )
 
   const quoted = names.map(quoteIdent).join(', ')
-  const rows = await sql<Record<string, unknown>>(fromDb, `SELECT ${quoted} FROM hdb_catalog.hdb_action_log`)
-  const missing = rows.filter((r) => !existing.has(String(r.id)))
-  if (missing.length === 0) return { copied: 0 }
+  // Only recent rows: anything older cannot still be in flight, and scanning
+  // the whole log every second would grow without bound.
+  const rows = await sql<Record<string, unknown>>(
+    fromDb,
+    `SELECT ${quoted} FROM hdb_catalog.hdb_action_log WHERE created_at > now() - interval '15 minutes'`,
+  )
+
+  const pending = rows.filter((r) => {
+    const done = targetState.get(String(r.id))
+    if (done === undefined) return true // target has never seen it
+    return !done && r.response_received_at !== null // target's copy is stale
+  })
+  if (pending.length === 0) return { copied: 0 }
 
   const placeholders = names.map((_, i) => `$${i + 1}`).join(', ')
+  const updatable = names.filter((n) => n !== 'id')
+  const updateSet = updatable.map((n) => `${quoteIdent(n)} = EXCLUDED.${quoteIdent(n)}`).join(', ')
+
   let copied = 0
-  for (const row of missing) {
+  for (const row of pending) {
     const values = names.map((n) => {
       const v = row[n]
       // jsonb columns come back as parsed objects; Postgres needs text it can cast.
@@ -201,7 +221,8 @@ export async function copyActionLog(fromDb: string, toDb: string): Promise<{ cop
     })
     const res = await sql(
       toDb,
-      `INSERT INTO hdb_catalog.hdb_action_log (${quoted}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`,
+      `INSERT INTO hdb_catalog.hdb_action_log (${quoted}) VALUES (${placeholders})
+       ON CONFLICT (id) DO UPDATE SET ${updateSet}`,
       values,
     ).catch(() => null)
     if (res !== null) copied++
